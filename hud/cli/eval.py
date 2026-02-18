@@ -447,13 +447,9 @@ class EvalConfig(BaseModel):
             elif k in overrides and cli_args.get(k) is False:
                 del overrides[k]
 
-        # --full is a shortcut for --all --auto-respond --max-steps 100
+        # --full is a shortcut for --all
         if overrides.get("full"):
             overrides["all"] = True
-            if "auto_respond" not in overrides:
-                overrides["auto_respond"] = True
-            if "max_steps" not in overrides:
-                overrides["max_steps"] = 100
 
         if config:
             merged_agent_config = dict(self.agent_config)
