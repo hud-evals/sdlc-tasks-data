@@ -1,20 +1,17 @@
 """Integration tests for the eval reward pipeline.
 
-These tests verify that rewards flow correctly from tool results
-through the eval context to the final score, and that CLI flags
-compose correctly.
-
-The tests use source-code inspection to validate behavior without
-depending on the installed package version, ensuring they work
-correctly in the grading environment.
+These tests verify BEHAVIOR — that rewards flow correctly from tool
+results through the eval context to the final score, and that CLI
+flags compose correctly. They accept any correct solution regardless
+of the specific code pattern used.
 """
 
 from __future__ import annotations
 
 import ast
-import os
-import re
-import textwrap
+import asyncio
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -25,194 +22,86 @@ def _read(relpath: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 1. structuredContent must pass through _execute_tool
+# 1. structuredContent must flow through _execute_tool
 # ---------------------------------------------------------------------------
 
 
-class TestStructuredContentPassthrough:
-    """_execute_tool must forward structuredContent from tool results."""
+class TestExecuteToolStructuredContent:
+    """_execute_tool must forward structuredContent from tool results.
 
-    def test_local_tool_passes_structured_content(self):
-        source = _read("hud/environment/environment.py")
+    We call the real _execute_tool method with mocked internals and verify
+    that the returned MCPToolResult has structuredContent set.
+    """
 
-        local_block = source[source.find("is_local(name)") :]
-        local_block = local_block[: local_block.find("connection_name")]
+    def _build_env(self, *, is_local: bool, mock_result):
+        """Build an Environment instance with mocked internals."""
+        from hud.environment.environment import Environment
 
-        assert "structured_content" in local_block or "structuredContent" in local_block, (
-            "_execute_tool drops structuredContent for local tools. "
-            "The MCPToolResult constructor must include "
-            "structuredContent=result.structured_content"
+        env = object.__new__(Environment)
+        env._mock_mode = False
+        env._tool_routing_built = True
+
+        env._router = MagicMock()
+        env._router.is_local.return_value = is_local
+
+        if is_local:
+            env._tool_manager = AsyncMock()
+            env._tool_manager.call_tool.return_value = mock_result
+            env._router.get_connection.return_value = None
+        else:
+            env._router.get_connection.return_value = "test_conn"
+            mock_conn = AsyncMock()
+            mock_conn.call_tool.return_value = mock_result
+            env._connections = {"test_conn": mock_conn}
+
+        return env
+
+    def test_local_tool_preserves_structured_content(self):
+        """Local tool results must include structuredContent in the MCPToolResult."""
+        mock_result = MagicMock()
+        mock_result.content = []
+        mock_result.structured_content = {"reward": 0.85}
+        mock_result.structuredContent = {"reward": 0.85}
+        mock_result.isError = False
+
+        env = self._build_env(is_local=True, mock_result=mock_result)
+        result = asyncio.get_event_loop().run_until_complete(
+            env._execute_tool("test_tool", {})
         )
 
-    def test_remote_tool_passes_structured_content(self):
-        source = _read("hud/environment/environment.py")
-
-        remote_block = source[source.find("get_connection(name)") :]
-        remote_block = remote_block[: remote_block.find("raise ValueError")]
-
-        assert "structuredContent" in remote_block, (
-            "_execute_tool drops structuredContent for remote tools. "
-            "The MCPToolResult constructor must include "
-            "structuredContent=result.structuredContent"
+        assert result.structuredContent is not None, (
+            "_execute_tool dropped structuredContent from local tool result"
         )
+        assert result.structuredContent.get("reward") == 0.85
+
+    def test_remote_tool_preserves_structured_content(self):
+        """Remote tool results must include structuredContent in the MCPToolResult."""
+        from mcp.types import CallToolResult
+
+        mock_result = CallToolResult(
+            content=[],
+            structuredContent={"reward": 0.95},
+            isError=False,
+        )
+
+        env = self._build_env(is_local=False, mock_result=mock_result)
+        result = asyncio.get_event_loop().run_until_complete(
+            env._execute_tool("test_tool", {})
+        )
+
+        assert result.structuredContent is not None, (
+            "_execute_tool dropped structuredContent from remote tool result"
+        )
+        assert result.structuredContent.get("reward") == 0.95
 
 
 # ---------------------------------------------------------------------------
-# 2. EvalContext must propagate _evaluate_reward to self.reward
-# ---------------------------------------------------------------------------
-
-
-class TestEvalContextReward:
-    """EvalContext.__aexit__ must copy _evaluate_reward to self.reward."""
-
-    def test_evaluate_reward_propagation(self):
-        source = _read("hud/eval/context.py")
-
-        assert "self.reward = self._evaluate_reward" in source, (
-            "EvalContext.__aexit__ does not set self.reward from _evaluate_reward. "
-            "Add: if self.reward is None and hasattr(self, '_evaluate_reward'): "
-            "self.reward = self._evaluate_reward"
-        )
-
-
-# ---------------------------------------------------------------------------
-# 3. CLI --full must compose --all, --auto-respond, --max-steps 100
-# ---------------------------------------------------------------------------
-
-
-class TestEvalCLIFlags:
-    """--full flag must compose --all, --auto-respond, and --max-steps 100."""
-
-    def _get_merge_cli_source(self) -> str:
-        source = _read("hud/cli/eval.py")
-        start = source.find("def merge_cli")
-        end = source.find("\n    def ", start + 1)
-        return source[start:end]
-
-    def test_full_sets_all(self):
-        src = self._get_merge_cli_source()
-
-        has_full_to_all = (
-            'overrides["all"] = True' in src
-            or "overrides['all'] = True" in src
-        )
-        assert has_full_to_all, (
-            "--full must set all=True in merge_cli. "
-            'Expected: overrides["all"] = True'
-        )
-
-    def test_full_sets_auto_respond(self):
-        src = self._get_merge_cli_source()
-
-        has_auto_respond = (
-            'overrides["auto_respond"] = True' in src
-            or "overrides['auto_respond'] = True" in src
-            or "auto_respond" in src
-        )
-
-        full_block = src[src.find("full") :]
-        sets_auto_respond = "auto_respond" in full_block and "True" in full_block
-
-        assert sets_auto_respond, (
-            "--full must set auto_respond=True. "
-            "Currently --full only sets all=True, missing auto_respond."
-        )
-
-    def test_full_sets_max_steps(self):
-        src = self._get_merge_cli_source()
-
-        full_block = src[src.find("full") :]
-        sets_max_steps = "max_steps" in full_block and "100" in full_block
-
-        assert sets_max_steps, (
-            "--full must set max_steps=100. "
-            "Currently --full does not set max_steps."
-        )
-
-    def test_max_steps_default_is_10(self):
-        source = _read("hud/cli/eval.py")
-
-        match = re.search(r'max_steps:\s*int\s*=\s*(\d+)', source)
-        assert match is not None, "Could not find max_steps default in EvalConfig"
-        assert match.group(1) == "10", (
-            f"max_steps default should be 10, got {match.group(1)}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# 4. Runner must NOT override context reward
-# ---------------------------------------------------------------------------
-
-
-class TestRunnerRewardHandling:
-    """Runner must not clobber ctx.reward with result.reward."""
-
-    def test_run_dataset_does_not_override_ctx_reward(self):
-        source = _read("hud/datasets/runner.py")
-
-        assert "ctx.reward = result.reward" not in source, (
-            "run_dataset sets ctx.reward = result.reward, which overwrites "
-            "the reward computed by EvalContext.__aexit__ from evaluate tools. "
-            "Remove this line — reward propagation is handled by EvalContext."
-        )
-
-    def test_run_single_task_does_not_override_ctx_reward(self):
-        source = _read("hud/datasets/runner.py")
-
-        assert "ctx.reward = result.reward" not in source, (
-            "run_single_task sets ctx.reward = result.reward, which overwrites "
-            "the reward computed by EvalContext.__aexit__ from evaluate tools. "
-            "Remove this line — reward propagation is handled by EvalContext."
-        )
-
-
-# ---------------------------------------------------------------------------
-# 5. find_reward error logging should show structuredContent, not full result
-# ---------------------------------------------------------------------------
-
-
-class TestRewardLogging:
-    """find_reward error logging must be actionable."""
-
-    def test_error_log_shows_structured_content_not_full_result(self):
-        source = _read("hud/agents/base.py")
-
-        find_reward_src = source[source.find("def find_reward") :]
-        next_def = find_reward_src.find("\ndef ", 1)
-        if next_def > 0:
-            find_reward_src = find_reward_src[:next_def]
-
-        assert "str(result.structuredContent)" in find_reward_src, (
-            "find_reward logs the entire MCPToolResult object on parse failure "
-            "(logger.error('...', result)), which produces huge unreadable output. "
-            "Use str(result.structuredContent) instead."
-        )
-
-
-# ---------------------------------------------------------------------------
-# 6. Functional test: find_reward parses structuredContent correctly
+# 2. find_reward correctly extracts rewards from structuredContent
 # ---------------------------------------------------------------------------
 
 
 class TestFindRewardFunctional:
     """find_reward() must extract rewards from structuredContent."""
-
-    def _import_find_reward(self):
-        """Import find_reward, handling potential import path issues."""
-        import importlib
-        import sys
-
-        spec = importlib.util.spec_from_file_location(
-            "hud.agents.base_test", "hud/agents/base.py"
-        )
-        if spec is None or spec.loader is None:
-            pytest.skip("Cannot load hud/agents/base.py as module")
-        mod = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(mod)
-        except Exception:
-            pytest.skip("Cannot execute hud/agents/base.py (missing deps)")
-        return mod.find_reward
 
     def test_finds_reward_in_structured_content(self):
         from hud.agents.base import find_reward
@@ -256,3 +145,203 @@ class TestFindRewardFunctional:
             isError=True,
         )
         assert find_reward(result) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# 3. Evaluate tool rewards must propagate to final ctx.reward
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluateRewardPropagation:
+    """Environment.__aexit__ → _evaluate_reward → EvalContext.reward"""
+
+    def test_environment_aexit_computes_evaluate_reward(self):
+        """Environment.__aexit__ must compute _evaluate_reward from evaluate tool calls."""
+        from hud.environment.environment import Environment
+        from hud.types import MCPToolResult
+
+        env = object.__new__(Environment)
+        env._evaluate_calls = [("grade_tool", {"answer": "test"})]
+        env._in_context = True
+        env._connections = {}
+        env._router = MagicMock()
+        env._router.clear = MagicMock()
+        env._tool_routing_built = True
+        env._prompt_routing_built = True
+
+        async def mock_execute(name, args):
+            return MCPToolResult(
+                content=[],
+                structuredContent={"reward": 0.75},
+            )
+
+        env._execute_tool = mock_execute
+
+        asyncio.get_event_loop().run_until_complete(
+            env.__aexit__(None, None, None)
+        )
+
+        assert hasattr(env, "_evaluate_reward"), (
+            "Environment.__aexit__ did not set _evaluate_reward"
+        )
+        assert env._evaluate_reward == 0.75, (
+            f"Expected _evaluate_reward=0.75, got {env._evaluate_reward}"
+        )
+
+    def test_eval_context_propagates_evaluate_reward(self):
+        """EvalContext.__aexit__ must copy _evaluate_reward to self.reward."""
+        from hud.eval.context import EvalContext
+        from hud.types import MCPToolResult
+
+        ctx = object.__new__(EvalContext)
+        ctx.reward = None
+        ctx.error = None
+        ctx._token = None
+        ctx._api_key_token = None
+        ctx._evaluate_calls = [("grade", {})]
+        ctx._in_context = True
+        ctx._connections = {}
+        ctx._router = MagicMock()
+        ctx._router.clear = MagicMock()
+        ctx._tool_routing_built = True
+        ctx._prompt_routing_built = True
+        ctx.trace_id = "test-trace"
+        ctx._scenario_runner = None
+        ctx._is_summary = False
+
+        async def mock_execute(name, args):
+            return MCPToolResult(
+                content=[],
+                structuredContent={"reward": 0.85},
+            )
+
+        ctx._execute_tool = mock_execute
+
+        async def run():
+            with patch("hud.eval.context.flush"), \
+                 patch.object(ctx, "_run_task_scenario_evaluate", new_callable=AsyncMock), \
+                 patch.object(ctx, "_eval_exit", new_callable=AsyncMock), \
+                 patch.object(ctx, "_print_single_result", MagicMock()):
+                await ctx.__aexit__(None, None, None)
+
+        asyncio.get_event_loop().run_until_complete(run())
+
+        assert ctx.reward is not None, (
+            "EvalContext.__aexit__ did not set self.reward from evaluate tools. "
+            "After evaluate tools compute a reward, it must propagate to ctx.reward."
+        )
+        assert ctx.reward == 0.85, (
+            f"Expected ctx.reward=0.85 from evaluate tools, got {ctx.reward}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 4. Runner must not clobber evaluate-tool reward
+# ---------------------------------------------------------------------------
+
+
+class TestRunnerRewardHandling:
+    """Runner must not assign ctx.reward from result.reward.
+
+    The evaluate tools compute the reward during EvalContext.__aexit__.
+    Any assignment of ctx.reward = result.reward in the runner (whether
+    conditional or unconditional) would interfere with this flow because
+    it runs BEFORE __aexit__.
+    """
+
+    def _find_ctx_reward_assignments(self, source: str) -> list[ast.AST]:
+        """Find all AST nodes where ctx.reward is assigned from result.reward."""
+        tree = ast.parse(source)
+        matches = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "ctx"
+                        and target.attr == "reward"
+                        and isinstance(node.value, ast.Attribute)
+                        and isinstance(node.value.value, ast.Name)
+                        and node.value.value.id == "result"
+                        and node.value.attr == "reward"
+                    ):
+                        matches.append(node)
+        return matches
+
+    def test_runner_does_not_assign_ctx_reward_from_result(self):
+        """runner.py must not set ctx.reward = result.reward in any form.
+
+        This assignment runs inside the async-with block BEFORE __aexit__,
+        so it always overwrites the reward that evaluate tools compute.
+        Even a conditional guard (if ctx.reward is None) doesn't help
+        because ctx.reward IS None at that point — the evaluate tools
+        haven't run yet.
+        """
+        source = _read("hud/datasets/runner.py")
+        matches = self._find_ctx_reward_assignments(source)
+
+        assert len(matches) == 0, (
+            f"runner.py assigns ctx.reward = result.reward ({len(matches)} occurrence(s)). "
+            "This overwrites the reward computed by EvalContext.__aexit__ from "
+            "evaluate tools. Remove these assignments — reward propagation is "
+            "handled by EvalContext."
+        )
+
+
+# ---------------------------------------------------------------------------
+# 5. CLI --full must compose --all, --auto-respond, --max-steps 100
+# ---------------------------------------------------------------------------
+
+
+class TestEvalCLIFlags:
+    """--full flag must compose --all, --auto-respond, and --max-steps 100.
+
+    Tests call merge_cli directly and check the resulting config object.
+    """
+
+    def test_full_flag_sets_all(self):
+        from hud.cli.eval import EvalConfig
+
+        cfg = EvalConfig()
+        merged = cfg.merge_cli(full=True)
+        assert merged.all is True, "--full did not set all=True"
+
+    def test_full_flag_sets_auto_respond(self):
+        from hud.cli.eval import EvalConfig
+
+        cfg = EvalConfig()
+        merged = cfg.merge_cli(full=True)
+        assert merged.auto_respond is True, (
+            "--full did not set auto_respond=True. "
+            "The --full flag should compose --all, --auto-respond, and --max-steps 100."
+        )
+
+    def test_full_flag_sets_max_steps_100(self):
+        from hud.cli.eval import EvalConfig
+
+        cfg = EvalConfig()
+        merged = cfg.merge_cli(full=True)
+        assert merged.max_steps == 100, (
+            f"--full set max_steps={merged.max_steps}, expected 100. "
+            "The --full flag should compose --all, --auto-respond, and --max-steps 100."
+        )
+
+    def test_full_flag_does_not_override_explicit_overrides(self):
+        """User-specified values should take precedence over --full defaults."""
+        from hud.cli.eval import EvalConfig
+
+        cfg = EvalConfig()
+        merged = cfg.merge_cli(full=True, max_steps=50)
+        assert merged.max_steps == 50, (
+            "--full should not override an explicitly set max_steps"
+        )
+
+    def test_max_steps_default_is_10(self):
+        from hud.cli.eval import EvalConfig
+
+        cfg = EvalConfig()
+        assert cfg.max_steps == 10, (
+            f"max_steps default should be 10, got {cfg.max_steps}"
+        )
