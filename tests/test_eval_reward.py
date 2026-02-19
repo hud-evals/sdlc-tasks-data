@@ -8,7 +8,6 @@ of the specific code pattern used.
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -236,57 +235,84 @@ class TestEvaluateRewardPropagation:
 
 
 # ---------------------------------------------------------------------------
-# 4. Runner must not clobber evaluate-tool reward
+# 4. Evaluate tool reward must win over agent's result.reward
 # ---------------------------------------------------------------------------
 
 
 class TestRunnerRewardHandling:
-    """Runner must not assign ctx.reward from result.reward.
+    """The final ctx.reward must come from evaluate tools, not from the agent run.
 
-    The evaluate tools compute the reward during EvalContext.__aexit__.
-    Any assignment of ctx.reward = result.reward in the runner (whether
-    conditional or unconditional) would interfere with this flow because
-    it runs BEFORE __aexit__.
+    The runner calls agent.run() which returns result.reward (typically 0.0).
+    Then EvalContext.__aexit__ runs evaluate tools which compute the real reward.
+    Regardless of whether the runner touches ctx.reward or not, the final
+    value of ctx.reward after __aexit__ must reflect the evaluate tools.
     """
 
-    def _find_ctx_reward_assignments(self, source: str) -> list[ast.AST]:
-        """Find all AST nodes where ctx.reward is assigned from result.reward."""
-        tree = ast.parse(source)
-        matches = []
+    def _make_eval_context(self, *, pre_set_reward=None):
+        """Build an EvalContext with mocked evaluate tools returning reward=0.85."""
+        from hud.eval.context import EvalContext
+        from hud.types import MCPToolResult
 
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if (
-                        isinstance(target, ast.Attribute)
-                        and isinstance(target.value, ast.Name)
-                        and target.value.id == "ctx"
-                        and target.attr == "reward"
-                        and isinstance(node.value, ast.Attribute)
-                        and isinstance(node.value.value, ast.Name)
-                        and node.value.value.id == "result"
-                        and node.value.attr == "reward"
-                    ):
-                        matches.append(node)
-        return matches
+        ctx = object.__new__(EvalContext)
+        ctx.reward = pre_set_reward
+        ctx.error = None
+        ctx._token = None
+        ctx._api_key_token = None
+        ctx._evaluate_calls = [("grade", {})]
+        ctx._in_context = True
+        ctx._connections = {}
+        ctx._router = MagicMock()
+        ctx._router.clear = MagicMock()
+        ctx._tool_routing_built = True
+        ctx._prompt_routing_built = True
+        ctx.trace_id = "test-trace"
+        ctx._scenario_runner = None
+        ctx._is_summary = False
 
-    def test_runner_does_not_assign_ctx_reward_from_result(self):
-        """runner.py must not set ctx.reward = result.reward in any form.
+        async def mock_execute(name, args):
+            return MCPToolResult(
+                content=[],
+                structuredContent={"reward": 0.85},
+            )
 
-        This assignment runs inside the async-with block BEFORE __aexit__,
-        so it always overwrites the reward that evaluate tools compute.
-        Even a conditional guard (if ctx.reward is None) doesn't help
-        because ctx.reward IS None at that point — the evaluate tools
-        haven't run yet.
+        ctx._execute_tool = mock_execute
+        return ctx
+
+    def _run_aexit(self, ctx):
+        async def run():
+            with patch("hud.eval.context.flush"), \
+                 patch.object(ctx, "_run_task_scenario_evaluate", new_callable=AsyncMock), \
+                 patch.object(ctx, "_eval_exit", new_callable=AsyncMock), \
+                 patch.object(ctx, "_print_single_result", MagicMock()):
+                await ctx.__aexit__(None, None, None)
+
+        asyncio.get_event_loop().run_until_complete(run())
+
+    def test_evaluate_reward_wins_when_runner_does_not_set_reward(self):
+        """If the runner leaves ctx.reward as None, evaluate tools must set it."""
+        ctx = self._make_eval_context(pre_set_reward=None)
+        self._run_aexit(ctx)
+
+        assert ctx.reward == 0.85, (
+            f"ctx.reward should be 0.85 from evaluate tools, got {ctx.reward}. "
+            "EvalContext.__aexit__ must propagate _evaluate_reward to self.reward."
+        )
+
+    def test_evaluate_reward_wins_over_runner_zero(self):
+        """If the runner pre-sets ctx.reward=0.0, evaluate tools must still win.
+
+        This simulates the buggy flow: runner does ctx.reward = result.reward
+        (which is 0.0 because the agent didn't produce a reward), then
+        __aexit__ runs evaluate tools that compute reward=0.85. The final
+        ctx.reward must be 0.85, not 0.0.
         """
-        source = _read("hud/datasets/runner.py")
-        matches = self._find_ctx_reward_assignments(source)
+        ctx = self._make_eval_context(pre_set_reward=0.0)
+        self._run_aexit(ctx)
 
-        assert len(matches) == 0, (
-            f"runner.py assigns ctx.reward = result.reward ({len(matches)} occurrence(s)). "
-            "This overwrites the reward computed by EvalContext.__aexit__ from "
-            "evaluate tools. Remove these assignments — reward propagation is "
-            "handled by EvalContext."
+        assert ctx.reward == 0.85, (
+            f"ctx.reward should be 0.85 from evaluate tools, got {ctx.reward}. "
+            "When evaluate tools compute a reward, it must take precedence "
+            "over any value set by the runner before __aexit__."
         )
 
 
