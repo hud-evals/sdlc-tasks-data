@@ -106,8 +106,8 @@ async def run_dataset(
 
         # Create agent using AgentType.cls.create()
         agent = agent_type.cls.create(**final_agent_params)
-        result = await agent.run(ctx, max_steps=max_steps)
-        ctx.reward = result.reward
+        await agent.run(ctx, max_steps=max_steps)
+        # Reward is computed by EvalContext.__aexit__ from evaluate tools
 
     # For parallel execution, results are collected via ctx.results
     if hasattr(ctx, "results") and ctx.results:
@@ -213,6 +213,7 @@ async def run_single_task(
             ctx.metadata.update(metadata)
 
         result = await agent.run(ctx, max_steps=max_steps)
-        ctx.reward = result.reward
+        # Reward is computed by EvalContext.__aexit__ from evaluate tools
 
+    # Return the Trace (ctx.reward is set by EvalContext.__aexit__)
     return result

@@ -660,7 +660,9 @@ class EvalContext(Environment):
         # Disconnect environment (parent class) - also runs evaluate tools
         await super().__aexit__(exc_type, exc_val, exc_tb)
 
-        # Note: reward should already be set by the runner
+        # Evaluate tools determine the final reward
+        if hasattr(self, "_evaluate_reward") and self._evaluate_reward is not None:
+            self.reward = self._evaluate_reward
 
         # Reset context vars
         if self._token is not None:
