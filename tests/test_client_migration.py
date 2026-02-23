@@ -22,6 +22,23 @@ def _read_source(filepath: str) -> str:
         return f.read()
 
 
+def _find_function(tree: ast.Module, function_name: str) -> ast.FunctionDef:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == function_name:
+            return node
+    raise AssertionError(f"Function '{function_name}' not found")
+
+
+def _function_source(filepath: str, function_name: str) -> str:
+    source = _read_source(filepath)
+    lines = source.splitlines()
+    tree = ast.parse(source)
+    fn = _find_function(tree, function_name)
+    start = fn.lineno - 1
+    end = fn.end_lineno
+    return "\n".join(lines[start:end])
+
+
 class TestNoOldClientImports:
     """The deleted hud.clients module must not be imported anywhere."""
 
@@ -51,6 +68,9 @@ class TestNoOldClientImports:
     def test_server_no_old_imports(self):
         self._assert_no_old_imports("hud/server/server.py")
 
+    def test_dev_no_old_imports(self):
+        self._assert_no_old_imports("hud/cli/dev.py")
+
 
 class TestNoOldClientUsage:
     """Code must not instantiate or call methods on FastMCPHUDClient.
@@ -75,6 +95,12 @@ class TestNoOldClientUsage:
 
     def test_debug_no_fastmcp_hud_client(self):
         self._assert_no_fastmcp_hud_client("hud/cli/debug.py")
+
+    def test_server_no_fastmcp_hud_client(self):
+        self._assert_no_fastmcp_hud_client("hud/server/server.py")
+
+    def test_dev_no_fastmcp_hud_client(self):
+        self._assert_no_fastmcp_hud_client("hud/cli/dev.py")
 
 
 class TestServerSignalHandling:
@@ -110,6 +136,47 @@ class TestServerSignalHandling:
             "loop.add_signal_handler alone doesn't fire when the event loop "
             "is blocked on stdin reads."
         )
+
+    def test_sync_signal_registered_before_anyio_run(self):
+        """Register sync handlers before entering anyio.run loop."""
+        fn_source = _function_source("hud/server/server.py", "_run_with_sigterm")
+        fn_tree = ast.parse(fn_source)
+
+        sigterm_lines: list[int] = []
+        anyio_run_lines: list[int] = []
+
+        for node in ast.walk(fn_tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "signal"
+                and node.func.attr == "signal"
+                and node.args
+                and isinstance(node.args[0], ast.Attribute)
+                and isinstance(node.args[0].value, ast.Name)
+                and node.args[0].value.id == "signal"
+                and node.args[0].attr == "SIGTERM"
+            ):
+                sigterm_lines.append(node.lineno)
+            if (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "anyio"
+                and node.func.attr == "run"
+            ):
+                anyio_run_lines.append(node.lineno)
+
+        assert sigterm_lines, (
+            "Expected synchronous SIGTERM registration with signal.signal"
+        )
+        # Some valid implementations may not call anyio.run in this function.
+        if anyio_run_lines:
+            assert min(sigterm_lines) < min(anyio_run_lines), (
+                "signal.signal(SIGTERM, ...) must be registered before anyio.run(...) "
+                "so the shutdown flag is set even when the loop blocks on stdio."
+            )
 
     def test_sync_handler_sets_flag(self):
         """A synchronous signal handler function must set _sigterm_received."""
@@ -154,3 +221,37 @@ class TestDebugFileParses:
             compile(source, "hud/server/server.py", "exec")
         except SyntaxError as e:
             assert False, f"hud/server/server.py has syntax error: {e}"
+
+
+class TestDevReloadBehavior:
+    """Dev child process path should avoid bare asyncio.run(run_mcp_module(...))."""
+
+    def test_no_bare_asyncio_run_for_child_server(self):
+        tree = _parse_file("hud/cli/dev.py")
+        run_mcp_dev_server = _find_function(tree, "run_mcp_dev_server")
+
+        for node in ast.walk(run_mcp_dev_server):
+            if not isinstance(node, ast.Call):
+                continue
+
+            # Match: asyncio.run(...)
+            if not (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "run"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "asyncio"
+            ):
+                continue
+
+            if not node.args:
+                continue
+
+            first_arg = node.args[0]
+            # Disallow direct asyncio.run(run_mcp_module(...)) in child mode.
+            if isinstance(first_arg, ast.Call):
+                callee = first_arg.func
+                if isinstance(callee, ast.Name) and callee.id == "run_mcp_module":
+                    assert False, (
+                        "run_mcp_dev_server uses bare asyncio.run(run_mcp_module(...)). "
+                        "Use a signal-aware wrapper so shutdown handlers run on SIGTERM."
+                    )
