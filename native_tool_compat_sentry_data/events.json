@@ -1,0 +1,470 @@
+[
+  {
+    "eventID": "a8c3e1f2d4b6a9c7e5f3d1b8a2c4e6f0",
+    "groupID": "15",
+    "title": "AttributeError: 'list' object has no attribute 'api_type'",
+    "culprit": "hud.agents.base in resolve_native_spec",
+    "dateCreated": "2026-02-23T09:47:33Z",
+    "platform": "python",
+    "level": "error",
+    "tags": [
+      {"key": "model", "value": "claude-opus-4-6"},
+      {"key": "agent_type", "value": "claude"},
+      {"key": "deployment", "value": "v0.5.13"},
+      {"key": "environment", "value": "production"},
+      {"key": "handled", "value": "no"},
+      {"key": "level", "value": "error"},
+      {"key": "mechanism", "value": "generic"},
+      {"key": "tool", "value": "anthropic_computer"},
+      {"key": "release", "value": "hud-python@0.5.13"},
+      {"key": "runtime", "value": "CPython 3.12.3"},
+      {"key": "runtime.name", "value": "CPython"},
+      {"key": "server_name", "value": "eval-worker-03"},
+      {"key": "user", "value": "id:eval-worker-03", "query": "user.id:\"eval-worker-03\""}
+    ],
+    "contexts": {
+      "os": {"name": "Linux", "version": "6.1.0-26-amd64", "type": "os"},
+      "runtime": {"runtime": "CPython 3.12.3", "name": "CPython", "version": "3.12.3", "type": "runtime"},
+      "trace": {"trace_id": "d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9", "span_id": "1a2b3c4d5e6f7a8b", "status": "unknown", "type": "trace"}
+    },
+    "entries": [
+      {
+        "data": {
+          "values": [
+            {
+              "type": "AttributeError",
+              "value": "'list' object has no attribute 'api_type'",
+              "mechanism": {"type": "generic", "handled": false},
+              "threadId": null,
+              "module": "builtins",
+              "stacktrace": {
+                "frames": [
+                  {
+                    "filename": "hud/agents/claude.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/agents/claude.py",
+                    "module": "hud.agents.claude",
+                    "function": "_convert_tools_for_claude",
+                    "lineNo": 354,
+                    "inApp": true,
+                    "context": [
+                      [351, "        # Process native tools"],
+                      [352, "        for tool in (self._available_tools or []):"],
+                      [353, "            spec = self.resolve_native_spec(tool)"],
+                      [354, "            if spec and spec.api_type:"],
+                      [355, "                if spec.api_type.startswith('computer'):"],
+                      [356, "                    self.has_computer_tool = True"]
+                    ],
+                    "vars": {
+                      "self": "<ClaudeAgent model='claude-opus-4-6'>",
+                      "tool": "<Tool name='anthropic_computer'>",
+                      "spec": "[<NativeToolSpec api_type='computer_20251124' ...>, <NativeToolSpec api_type='computer_20250124' ...>]"
+                    }
+                  },
+                  {
+                    "filename": "hud/agents/base.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/agents/base.py",
+                    "module": "hud.agents.base",
+                    "function": "resolve_native_spec",
+                    "lineNo": 112,
+                    "inApp": true,
+                    "context": [
+                      [108, "        spec_data = None"],
+                      [109, "        if tool.meta:"],
+                      [110, "            native_tools = tool.meta.get('native_tools', {})"],
+                      [111, "            spec_data = native_tools.get(self.agent_type().value)"],
+                      [112, "            if isinstance(spec_data, dict):"],
+                      [113, "                spec = _parse_spec_dict(spec_data)"],
+                      [114, "            # BUG: no handling for list case — returns raw list"]
+                    ],
+                    "vars": {
+                      "tool": "<Tool name='anthropic_computer'>",
+                      "spec_data": "[{'api_type': 'computer_20251124', 'api_name': 'computer', 'beta': 'computer-use-2025-11-24', 'role': 'computer', 'supported_models': ['claude-opus-4-5*', 'claude-opus-4-6*']}, {'api_type': 'computer_20250124', 'api_name': 'computer', 'beta': 'computer-use-2025-01-24', 'role': 'computer'}]",
+                      "spec": "None"
+                    }
+                  },
+                  {
+                    "filename": "hud/tools/base.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/tools/base.py",
+                    "module": "hud.tools.base",
+                    "function": "get_native_spec",
+                    "lineNo": 129,
+                    "inApp": true,
+                    "context": [
+                      [126, "    def get_native_spec(self, agent_type: AgentType) -> NativeToolSpec | None:"],
+                      [127, "        \"\"\"Get the native tool spec for a specific agent type.\"\"\""],
+                      [128, "        # Returns raw value — does NOT handle list-of-specs"],
+                      [129, "        return self._native_specs.get(agent_type)"]
+                    ],
+                    "vars": {
+                      "agent_type": "AgentType.CLAUDE",
+                      "self._native_specs": "{'claude': [<NativeToolSpec api_type='computer_20251124'>, <NativeToolSpec api_type='computer_20250124'>]}"
+                    }
+                  }
+                ],
+                "framesOmitted": null,
+                "registers": null,
+                "hasSystemFrames": true
+              },
+              "rawStacktrace": null,
+              "rawValue": null,
+              "rawModule": null,
+              "rawType": null
+            }
+          ],
+          "hasSystemFrames": true,
+          "excOmitted": null
+        },
+        "type": "exception"
+      }
+    ]
+  },
+  {
+    "eventID": "b9d4f2a6c8e1b3d5f7a9c2e4b6d8f0a1",
+    "groupID": "15",
+    "title": "AttributeError: 'list' object has no attribute 'api_type'",
+    "culprit": "hud.agents.base in resolve_native_spec",
+    "dateCreated": "2026-02-22T16:31:08Z",
+    "platform": "python",
+    "level": "error",
+    "tags": [
+      {"key": "model", "value": "claude-opus-4-6"},
+      {"key": "agent_type", "value": "openai"},
+      {"key": "deployment", "value": "v0.5.13"},
+      {"key": "environment", "value": "production"},
+      {"key": "handled", "value": "no"},
+      {"key": "level", "value": "error"},
+      {"key": "mechanism", "value": "generic"},
+      {"key": "tool", "value": "anthropic_computer"},
+      {"key": "release", "value": "hud-python@0.5.13"},
+      {"key": "runtime", "value": "CPython 3.12.3"},
+      {"key": "runtime.name", "value": "CPython"},
+      {"key": "server_name", "value": "eval-worker-01"},
+      {"key": "user", "value": "id:eval-worker-01", "query": "user.id:\"eval-worker-01\""}
+    ],
+    "contexts": {
+      "os": {"name": "Linux", "version": "6.1.0-26-amd64", "type": "os"},
+      "runtime": {"runtime": "CPython 3.12.3", "name": "CPython", "version": "3.12.3", "type": "runtime"},
+      "trace": {"trace_id": "e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0", "span_id": "2b3c4d5e6f7a8b9c", "status": "unknown", "type": "trace"}
+    },
+    "entries": [
+      {
+        "data": {
+          "values": [
+            {
+              "type": "AttributeError",
+              "value": "'list' object has no attribute 'api_type'",
+              "mechanism": {"type": "generic", "handled": false},
+              "threadId": null,
+              "module": "builtins",
+              "stacktrace": {
+                "frames": [
+                  {
+                    "filename": "hud/agents/openai.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/agents/openai.py",
+                    "module": "hud.agents.openai",
+                    "function": "_convert_tools_for_openai",
+                    "lineNo": 198,
+                    "inApp": true,
+                    "context": [
+                      [195, "        for tool in (self._available_tools or []):"],
+                      [196, "            spec = self.resolve_native_spec(tool)"],
+                      [197, "            if spec:"],
+                      [198, "                if spec.api_type and spec.hosted:"],
+                      [199, "                    hosted_tools.append((tool, spec))"],
+                      [200, "                else:"]
+                    ],
+                    "vars": {
+                      "self": "<OpenAIAgent model='claude-opus-4-6'>",
+                      "tool": "<Tool name='anthropic_computer'>",
+                      "spec": "[<NativeToolSpec api_type='computer_20251124' ...>, <NativeToolSpec api_type='computer_20250124' ...>]"
+                    }
+                  },
+                  {
+                    "filename": "hud/agents/base.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/agents/base.py",
+                    "module": "hud.agents.base",
+                    "function": "resolve_native_spec",
+                    "lineNo": 112,
+                    "inApp": true,
+                    "context": [
+                      [108, "        spec_data = None"],
+                      [109, "        if tool.meta:"],
+                      [110, "            native_tools = tool.meta.get('native_tools', {})"],
+                      [111, "            spec_data = native_tools.get(self.agent_type().value)"],
+                      [112, "            if isinstance(spec_data, dict):"],
+                      [113, "                spec = _parse_spec_dict(spec_data)"],
+                      [114, "            # BUG: no handling for list case"]
+                    ],
+                    "vars": {
+                      "tool": "<Tool name='anthropic_computer'>",
+                      "spec_data": "[{'api_type': 'computer_20251124', ...}, {'api_type': 'computer_20250124', ...}]"
+                    }
+                  }
+                ],
+                "framesOmitted": null,
+                "registers": null,
+                "hasSystemFrames": true
+              },
+              "rawStacktrace": null,
+              "rawValue": null,
+              "rawModule": null,
+              "rawType": null
+            }
+          ],
+          "hasSystemFrames": true,
+          "excOmitted": null
+        },
+        "type": "exception"
+      }
+    ]
+  },
+  {
+    "eventID": "c0e5a3b7d9f1c4e6a8b2d4f6a0c2e4b8",
+    "groupID": "17",
+    "title": "AttributeError: 'NoneType' object has no attribute 'beta'",
+    "culprit": "hud.agents.claude in _convert_tools_for_claude",
+    "dateCreated": "2026-02-23T11:02:19Z",
+    "platform": "python",
+    "level": "error",
+    "tags": [
+      {"key": "model", "value": "claude-opus-4-6"},
+      {"key": "agent_type", "value": "claude"},
+      {"key": "deployment", "value": "v0.5.13"},
+      {"key": "environment", "value": "production"},
+      {"key": "handled", "value": "no"},
+      {"key": "level", "value": "error"},
+      {"key": "mechanism", "value": "generic"},
+      {"key": "tool", "value": "anthropic_computer"},
+      {"key": "phase", "value": "tool-registration"},
+      {"key": "release", "value": "hud-python@0.5.13"},
+      {"key": "runtime", "value": "CPython 3.12.3"},
+      {"key": "runtime.name", "value": "CPython"},
+      {"key": "server_name", "value": "eval-worker-05"},
+      {"key": "user", "value": "id:eval-worker-05", "query": "user.id:\"eval-worker-05\""}
+    ],
+    "contexts": {
+      "os": {"name": "Linux", "version": "6.1.0-26-amd64", "type": "os"},
+      "runtime": {"runtime": "CPython 3.12.3", "name": "CPython", "version": "3.12.3", "type": "runtime"},
+      "trace": {"trace_id": "f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1", "span_id": "3c4d5e6f7a8b9c0d", "status": "unknown", "type": "trace"}
+    },
+    "entries": [
+      {
+        "data": {
+          "values": [
+            {
+              "type": "AttributeError",
+              "value": "'NoneType' object has no attribute 'beta'",
+              "mechanism": {"type": "generic", "handled": false},
+              "threadId": null,
+              "module": "builtins",
+              "stacktrace": {
+                "frames": [
+                  {
+                    "filename": "hud/agents/claude.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/agents/claude.py",
+                    "module": "hud.agents.claude",
+                    "function": "_convert_tools_for_claude",
+                    "lineNo": 357,
+                    "inApp": true,
+                    "context": [
+                      [353, "            spec = self.resolve_native_spec(tool)"],
+                      [354, "            if spec and spec.api_type:"],
+                      [355, "                claude_tool = self._build_native_tool(tool, spec)"],
+                      [356, "                # Collect required beta headers"],
+                      [357, "                self._required_betas.add(spec.beta)"],
+                      [358, "                api_name = spec.api_name or spec.api_type"],
+                      [359, "                self.tool_mapping[api_name] = tool.name"]
+                    ],
+                    "vars": {
+                      "self": "<ClaudeAgent model='claude-opus-4-6'>",
+                      "tool": "<Tool name='anthropic_computer'>",
+                      "spec": "None",
+                      "self._required_betas": "set()"
+                    }
+                  },
+                  {
+                    "filename": "hud/agents/base.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/agents/base.py",
+                    "module": "hud.agents.base",
+                    "function": "resolve_native_spec",
+                    "lineNo": 132,
+                    "inApp": true,
+                    "context": [
+                      [128, "        # Fall back to legacy name-based detection"],
+                      [129, "        if spec is None and not spec_data:"],
+                      [130, "            spec = self._legacy_native_spec_fallback(tool)"],
+                      [131, ""],
+                      [132, "        if spec is not None and not spec.supports_model(self.model):"],
+                      [133, "            return None"],
+                      [134, ""],
+                      [135, "        return spec"]
+                    ],
+                    "vars": {
+                      "tool": "<Tool name='anthropic_computer'>",
+                      "spec_data": "[{'api_type': 'computer_20251124', ...}, {'api_type': 'computer_20250124', ...}]",
+                      "spec": "None",
+                      "self.model": "'claude-opus-4-6'"
+                    }
+                  },
+                  {
+                    "filename": "hud/tools/base.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/tools/base.py",
+                    "module": "hud.tools.base",
+                    "function": "get_native_spec",
+                    "lineNo": 129,
+                    "inApp": true,
+                    "context": [
+                      [126, "    def get_native_spec(self, agent_type: AgentType) -> NativeToolSpec | None:"],
+                      [127, "        \"\"\"Get the native tool spec for a specific agent type.\"\"\""],
+                      [128, "        # Returns raw value — no model parameter, no list handling"],
+                      [129, "        return self._native_specs.get(agent_type)"]
+                    ],
+                    "vars": {
+                      "agent_type": "AgentType.CLAUDE",
+                      "self._native_specs": "{'claude': [<NativeToolSpec api_type='computer_20251124'>, <NativeToolSpec api_type='computer_20250124'>]}"
+                    }
+                  }
+                ],
+                "framesOmitted": null,
+                "registers": null,
+                "hasSystemFrames": true
+              },
+              "rawStacktrace": null,
+              "rawValue": null,
+              "rawModule": null,
+              "rawType": null
+            }
+          ],
+          "hasSystemFrames": true,
+          "excOmitted": null
+        },
+        "type": "exception"
+      }
+    ]
+  },
+  {
+    "eventID": "d1f6b4c8e0a2d5f7b9c3e5a7d0f2b4c6",
+    "groupID": "17",
+    "title": "AttributeError: 'NoneType' object has no attribute 'beta'",
+    "culprit": "hud.agents.claude in _convert_tools_for_claude",
+    "dateCreated": "2026-02-22T19:44:51Z",
+    "platform": "python",
+    "level": "error",
+    "tags": [
+      {"key": "model", "value": "claude-opus-4-6"},
+      {"key": "agent_type", "value": "claude"},
+      {"key": "deployment", "value": "v0.5.13"},
+      {"key": "environment", "value": "production"},
+      {"key": "handled", "value": "no"},
+      {"key": "level", "value": "error"},
+      {"key": "mechanism", "value": "generic"},
+      {"key": "tool", "value": "anthropic_computer"},
+      {"key": "phase", "value": "tool-registration"},
+      {"key": "release", "value": "hud-python@0.5.13"},
+      {"key": "runtime", "value": "CPython 3.12.3"},
+      {"key": "runtime.name", "value": "CPython"},
+      {"key": "server_name", "value": "eval-worker-02"},
+      {"key": "user", "value": "id:eval-worker-02", "query": "user.id:\"eval-worker-02\""}
+    ],
+    "contexts": {
+      "os": {"name": "Linux", "version": "6.1.0-26-amd64", "type": "os"},
+      "runtime": {"runtime": "CPython 3.12.3", "name": "CPython", "version": "3.12.3", "type": "runtime"},
+      "trace": {"trace_id": "a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2", "span_id": "4d5e6f7a8b9c0d1e", "status": "unknown", "type": "trace"}
+    },
+    "entries": [
+      {
+        "data": {
+          "values": [
+            {
+              "type": "AttributeError",
+              "value": "'NoneType' object has no attribute 'beta'",
+              "mechanism": {"type": "generic", "handled": false},
+              "threadId": null,
+              "module": "builtins",
+              "stacktrace": {
+                "frames": [
+                  {
+                    "filename": "hud/agents/claude.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/agents/claude.py",
+                    "module": "hud.agents.claude",
+                    "function": "_convert_tools_for_claude",
+                    "lineNo": 357,
+                    "inApp": true,
+                    "context": [
+                      [353, "            spec = self.resolve_native_spec(tool)"],
+                      [354, "            if spec and spec.api_type:"],
+                      [355, "                claude_tool = self._build_native_tool(tool, spec)"],
+                      [356, "                # Collect required beta headers"],
+                      [357, "                self._required_betas.add(spec.beta)"],
+                      [358, "                api_name = spec.api_name or spec.api_type"],
+                      [359, "                self.tool_mapping[api_name] = tool.name"]
+                    ],
+                    "vars": {
+                      "self": "<ClaudeAgent model='claude-opus-4-6'>",
+                      "tool": "<Tool name='anthropic_computer'>",
+                      "spec": "None",
+                      "self._required_betas": "set()"
+                    }
+                  },
+                  {
+                    "filename": "hud/agents/base.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/agents/base.py",
+                    "module": "hud.agents.base",
+                    "function": "categorize_tools",
+                    "lineNo": 225,
+                    "inApp": true,
+                    "context": [
+                      [222, "        for tool in tools_to_process:"],
+                      [223, "            spec = self.resolve_native_spec(tool)"],
+                      [224, "            if spec:"],
+                      [225, "                role = spec.role"],
+                      [226, "                if role:"],
+                      [227, "                    result.claimed_roles.add(role)"]
+                    ],
+                    "vars": {
+                      "tool": "<Tool name='anthropic_computer' meta={'native_tools': {'claude': [...]}}}>",
+                      "spec": "None",
+                      "self.model": "'claude-opus-4-6'"
+                    }
+                  },
+                  {
+                    "filename": "hud/agents/base.py",
+                    "absPath": "/home/ubuntu/.local/lib/python3.12/site-packages/hud/agents/base.py",
+                    "module": "hud.agents.base",
+                    "function": "resolve_native_spec",
+                    "lineNo": 111,
+                    "inApp": true,
+                    "context": [
+                      [107, "        spec: NativeToolSpec | None = None"],
+                      [108, "        spec_data = None"],
+                      [109, "        if tool.meta:"],
+                      [110, "            native_tools = tool.meta.get('native_tools', {})"],
+                      [111, "            spec_data = native_tools.get(self.agent_type().value)"],
+                      [112, "            if isinstance(spec_data, dict):"],
+                      [113, "                spec = _parse_spec_dict(spec_data)"]
+                    ],
+                    "vars": {
+                      "spec_data": "[{'api_type': 'computer_20251124', 'supported_models': ['claude-opus-4-5*', 'claude-opus-4-6*'], ...}, {'api_type': 'computer_20250124', ...}]",
+                      "spec": "None",
+                      "self.model": "'claude-opus-4-6'"
+                    }
+                  }
+                ],
+                "framesOmitted": null,
+                "registers": null,
+                "hasSystemFrames": true
+              },
+              "rawStacktrace": null,
+              "rawValue": null,
+              "rawModule": null,
+              "rawType": null
+            }
+          ],
+          "hasSystemFrames": true,
+          "excOmitted": null
+        },
+        "type": "exception"
+      }
+    ]
+  }
+]
