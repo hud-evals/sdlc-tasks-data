@@ -1,0 +1,56 @@
+[
+  {
+    "id": "15",
+    "shortId": "HUD-SDK-5",
+    "title": "AttributeError: 'list' object has no attribute 'api_type'",
+    "culprit": "hud.agents.base.MCPAgent.resolve_native_spec",
+    "level": "error",
+    "status": "unresolved",
+    "count": "89",
+    "userCount": 5,
+    "firstSeen": "2026-02-20T14:23:11Z",
+    "lastSeen": "2026-02-23T09:47:33Z",
+    "priority": "high",
+    "isUnhandled": true,
+    "permalink": "http://localhost:8000/organizations/sentry/issues/15/",
+    "metadata": {
+      "type": "AttributeError",
+      "value": "'list' object has no attribute 'api_type'",
+      "filename": "hud/agents/base.py",
+      "function": "resolve_native_spec"
+    },
+    "project": {
+      "name": "hud-sdk",
+      "slug": "hud-sdk",
+      "platform": "python"
+    },
+    "assignedTo": null
+  },
+  {
+    "id": "17",
+    "shortId": "HUD-SDK-7",
+    "title": "AttributeError: 'NoneType' object has no attribute 'beta'",
+    "culprit": "hud.agents.claude.ClaudeAgent._convert_tools_for_claude",
+    "level": "error",
+    "status": "unresolved",
+    "count": "23",
+    "userCount": 3,
+    "firstSeen": "2026-02-21T08:15:42Z",
+    "lastSeen": "2026-02-23T11:02:19Z",
+    "priority": "high",
+    "isUnhandled": true,
+    "permalink": "http://localhost:8000/organizations/sentry/issues/17/",
+    "metadata": {
+      "type": "AttributeError",
+      "value": "'NoneType' object has no attribute 'beta'",
+      "filename": "hud/agents/claude.py",
+      "function": "_convert_tools_for_claude"
+    },
+    "project": {
+      "name": "hud-sdk",
+      "slug": "hud-sdk",
+      "platform": "python"
+    },
+    "assignedTo": null
+  }
+]
