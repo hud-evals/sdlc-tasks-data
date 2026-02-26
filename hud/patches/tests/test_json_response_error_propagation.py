@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from hud.patches import mcp_patches
@@ -14,8 +16,7 @@ class DummyWriter:
         return None
 
 
-@pytest.mark.asyncio
-async def test_handle_json_response_reraises_parse_errors() -> None:
+async def _invoke_handle_json_response() -> None:
     mcp_patches.apply_all_patches()
 
     with pytest.raises(Exception):
@@ -25,3 +26,7 @@ async def test_handle_json_response_reraises_parse_errors() -> None:
             DummyWriter(),
             is_initialization=False,
         )
+
+
+def test_handle_json_response_reraises_parse_errors() -> None:
+    asyncio.run(_invoke_handle_json_response())
