@@ -1,0 +1,57 @@
+.venv
+.vscode
+venv
+.env
+__pycache__
+*.pyc
+.pytest_cache
+dist/
+build/
+*.egg-info/
+uv.lock
+
+# Media files
+*.jpg
+*.jpeg
+*.bmp
+*.tiff
+
+# DS-Store
+.DS_Store
+
+# Test files
+/*.ipynb
+TODO.md
+
+.coverage
+
+*.log
+
+/ref/
+
+.cursor/
+
+/dev/
+
+.claude
+CLAUDE.md
+
+*.csv
+.rl_config_*.json
+.rl-config-*.json
+
+# RL
+wandb/
+outputs/
+
+test/
+
+/checkpoints/
+/checkpoints_test/
+hud/rl/checkpoints/
+hud/rl/checkpoints_test/
+
+.ck/
+
+.hud_eval_config
+.hud_eval.toml
