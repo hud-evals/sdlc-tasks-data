@@ -5,6 +5,7 @@ Provides hud.eval() for task-based evaluation without needing an existing enviro
 
 from __future__ import annotations
 
+import copy
 import inspect
 import logging
 import uuid
@@ -483,12 +484,21 @@ async def _run_parallel_eval(
                 eval_configs.append((None, runtime_params))
                 idx += 1
 
-    # Create runner function using the actual variable name from the 'as' clause
+    def _build_runner() -> Any:
+        """Build a fresh runner so captured mutable locals don't bleed across runs."""
+        namespace: dict[str, Any] = {}
+        for name, value in captured_locals.items():
+            try:
+                namespace[name] = copy.deepcopy(value)
+            except Exception:
+                namespace[name] = value
+
+        exec(code, namespace)  # noqa: S102
+        return namespace["__runner__"]
+
+    # Compile runner function source using the context variable from the `as` clause
     wrapped = f"async def __runner__({context_var}):\n{textwrap.indent(body_source, '    ')}"
     code = compile(wrapped, "<parallel_eval>", "exec")
-    namespace = captured_locals.copy()
-    exec(code, namespace)  # noqa: S102
-    runner = namespace["__runner__"]
 
     # Create semaphore for concurrency control
     sem = asyncio.Semaphore(max_concurrent) if max_concurrent else None
@@ -509,6 +519,7 @@ async def _run_parallel_eval(
         params.pop("api_key", None)
 
         try:
+            runner = _build_runner()
             if sem:
                 async with sem, ctx:
                     await runner(ctx)
