@@ -394,6 +394,7 @@ async def run_eval(
                 )
 
             ctx._is_summary = True  # Skip trace tracking
+            ctx._block_summary_body = True
             ctx.results = completed
 
             # Compute aggregate reward
@@ -412,6 +413,10 @@ async def run_eval(
             error_occurred = True
             raise
         finally:
+            if "ctx" in locals():
+                # Keep summary result access available after the with-block exits.
+                ctx._block_summary_body = False
+                ctx._is_summary = False
             print_complete(job_url, eval_name, error=error_occurred)
 
 

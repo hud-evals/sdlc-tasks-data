@@ -428,17 +428,30 @@ class EvalContext(Environment):
 
     def __getattribute__(self, name: str) -> Any:
         """Block most attribute access on summary contexts."""
-        # Always allow private/dunder and whitelisted attrs
-        if name.startswith("_") or name in EvalContext._SUMMARY_ALLOWED:
+        # Always allow private/dunder attrs.
+        if name.startswith("_"):
             return super().__getattribute__(name)
 
-        # Check if this is a summary context
+        # Check if this is a summary context.
         try:
             is_summary = super().__getattribute__("_is_summary")
         except AttributeError:
             is_summary = False
 
         if is_summary:
+            # During the summary re-yield pass, block all public attributes so the
+            # user's with-block body is skipped immediately.
+            try:
+                block_summary_body = super().__getattribute__("_block_summary_body")
+            except AttributeError:
+                block_summary_body = False
+
+            if block_summary_body:
+                raise ParallelEvalComplete
+
+            # After the summary re-yield phase, keep allowing safe summary attrs.
+            if name in EvalContext._SUMMARY_ALLOWED:
+                return super().__getattribute__(name)
             raise ParallelEvalComplete
 
         return super().__getattribute__(name)
