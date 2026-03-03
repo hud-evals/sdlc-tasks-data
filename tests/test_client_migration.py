@@ -223,35 +223,26 @@ class TestDebugFileParses:
             assert False, f"hud/server/server.py has syntax error: {e}"
 
 
-class TestDevReloadBehavior:
-    """Dev child process path should avoid bare asyncio.run(run_mcp_module(...))."""
+class TestDevFileParses:
+    """dev.py must be syntactically valid after migration."""
 
-    def test_no_bare_asyncio_run_for_child_server(self):
-        tree = _parse_file("hud/cli/dev.py")
-        run_mcp_dev_server = _find_function(tree, "run_mcp_dev_server")
+    def test_dev_compiles(self):
+        source = _read_source("hud/cli/dev.py")
+        try:
+            compile(source, "hud/cli/dev.py", "exec")
+        except SyntaxError as e:
+            assert False, f"hud/cli/dev.py has syntax error: {e}"
 
-        for node in ast.walk(run_mcp_dev_server):
-            if not isinstance(node, ast.Call):
-                continue
+    def test_dev_no_old_lifecycle_calls(self):
+        """dev.py must not call .shutdown() or .initialize() (old client API)."""
+        source = _read_source("hud/cli/dev.py")
+        tree = ast.parse(source)
 
-            # Match: asyncio.run(...)
-            if not (
-                isinstance(node.func, ast.Attribute)
-                and node.func.attr == "run"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "asyncio"
-            ):
-                continue
-
-            if not node.args:
-                continue
-
-            first_arg = node.args[0]
-            # Disallow direct asyncio.run(run_mcp_module(...)) in child mode.
-            if isinstance(first_arg, ast.Call):
-                callee = first_arg.func
-                if isinstance(callee, ast.Name) and callee.id == "run_mcp_module":
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == "initialize":
+                if isinstance(node.ctx, ast.Load):
+                    line = getattr(node, "lineno", "?")
                     assert False, (
-                        "run_mcp_dev_server uses bare asyncio.run(run_mcp_module(...)). "
-                        "Use a signal-aware wrapper so shutdown handlers run on SIGTERM."
+                        f"hud/cli/dev.py:{line} calls '.initialize()' — "
+                        f"fastmcp.Client uses context manager or .__aenter__() instead."
                     )
