@@ -351,56 +351,61 @@ class Environment(
         """Connect all connectors, build routing, run setup tools."""
         self._in_context = True
 
-        # Connect to all servers and fetch tools/prompts/resources in parallel
-        sem = asyncio.Semaphore(self.MAX_CONCURRENT_CONNECTIONS)
-        errors: list[tuple[str, Exception]] = []
+        try:
+            # Connect to all servers and fetch tools/prompts/resources in parallel
+            sem = asyncio.Semaphore(self.MAX_CONCURRENT_CONNECTIONS)
+            errors: list[tuple[str, Exception]] = []
 
-        async def connect_one(name: str, conn: Connector) -> None:
-            async with sem:
+            async def connect_one(name: str, conn: Connector) -> None:
+                async with sem:
+                    try:
+                        await conn.connect()
+                        # Batch fetch all MCP primitives in parallel for performance
+                        await asyncio.gather(
+                            conn.list_tools(),
+                            conn.list_prompts(),
+                            conn.list_resources(),
+                        )
+                    except Exception as e:
+                        errors.append((name, e))
+
+            if self._connections:
+                await asyncio.gather(*[connect_one(n, c) for n, c in self._connections.items()])
+                if errors:
+                    name, err = errors[0]
+                    str_err = str(err).replace("Client failed to connect: ", "")  # Strip from FastMCP
+                    raise ConnectionError(f"Failed to connect to {name}: {str_err}") from err
+
+            await self._build_routing()
+
+            # Setup tool calls (after connections) - abort if any setup tool fails
+            # Store results for append_setup_output feature
+            self._setup_results = []
+            for name, args in self._setup_calls:
+                result = await self._execute_tool(name, args)
+                self._setup_results.append(result)
+                if result.isError:
+                    # Extract error message from result content
+                    error_msg = "Setup tool failed"
+                    if result.content:
+                        for block in result.content:
+                            if isinstance(block, mcp_types.TextContent):
+                                error_msg = block.text
+                                break
+                    raise RuntimeError(f"Setup tool '{name}' failed: {error_msg}")
+
+            return self
+        except BaseException:
+            # If __aenter__ fails, __aexit__ will never run. Reset context state
+            # and best-effort disconnect any connections established so far.
+            self._in_context = False
+            for conn in self._connections.values():
                 try:
-                    await conn.connect()
-                    # Batch fetch all MCP primitives in parallel for performance
-                    await asyncio.gather(
-                        conn.list_tools(),
-                        conn.list_prompts(),
-                        conn.list_resources(),
-                    )
-                except Exception as e:
-                    errors.append((name, e))
-
-        if self._connections:
-            await asyncio.gather(*[connect_one(n, c) for n, c in self._connections.items()])
-            if errors:
-                for conn in self._connections.values():
                     if conn.is_connected:
                         await conn.disconnect()
-                name, err = errors[0]
-                str_err = str(err).replace("Client failed to connect: ", "")  # Strip from FastMCP
-                raise ConnectionError(f"Failed to connect to {name}: {str_err}") from err
-
-        await self._build_routing()
-
-        # Setup tool calls (after connections) - abort if any setup tool fails
-        # Store results for append_setup_output feature
-        self._setup_results = []
-        for name, args in self._setup_calls:
-            result = await self._execute_tool(name, args)
-            self._setup_results.append(result)
-            if result.isError:
-                # Extract error message from result content
-                error_msg = "Setup tool failed"
-                if result.content:
-                    for block in result.content:
-                        if isinstance(block, mcp_types.TextContent):
-                            error_msg = block.text
-                            break
-                # Clean up connections before raising (since __aexit__ won't be called)
-                for conn in self._connections.values():
-                    if conn.is_connected:
-                        await conn.disconnect()
-                raise RuntimeError(f"Setup tool '{name}' failed: {error_msg}")
-
-        return self
+                except Exception:
+                    logger.debug("Failed disconnect during __aenter__ cleanup", exc_info=True)
+            raise
 
     async def __aexit__(
         self,
