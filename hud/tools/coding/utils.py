@@ -120,14 +120,15 @@ async def write_file_async(path: Path, content: str) -> None:
         ToolError: If file cannot be written
     """
     try:
-        safe_path = shlex.quote(str(path))
-        process = await asyncio.create_subprocess_shell(
-            f"cat > {safe_path} << 'EOF'\n{content}\nEOF",
-            stdout=asyncio.subprocess.PIPE,
+        process = await asyncio.create_subprocess_exec(
+            "tee",
+            str(path),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
             preexec_fn=get_demote_preexec_fn(),
         )
-        _, stderr = await process.communicate()
+        _, stderr = await process.communicate(content.encode("utf-8"))
         if process.returncode != 0:
             raise ToolError(f"Failed to write {path}: {stderr.decode()}")
     except Exception as e:
