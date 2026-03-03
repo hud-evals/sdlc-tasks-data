@@ -15,6 +15,9 @@ async def test_write_file_async_treats_eof_and_shell_like_lines_as_content():
     """Writing content should not interpret payload lines as shell syntax."""
     with tempfile.TemporaryDirectory(prefix="write_file_async_") as tmpdir:
         tmp_path = Path(tmpdir)
+        # write_file_async demotes subprocesses to uid/gid 1000 in containerized runs.
+        # Ensure the test scratch dir is writable for that user.
+        tmp_path.chmod(0o777)
         target_file = tmp_path / "payload.txt"
         marker_file = tmp_path / "marker.txt"
 
