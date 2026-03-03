@@ -121,9 +121,7 @@ async def write_file_async(path: Path, content: str) -> None:
     """
     try:
         safe_path = shlex.quote(str(path))
-        process = await asyncio.create_subprocess_exec(
-            "bash",
-            "-lc",
+        process = await asyncio.create_subprocess_shell(
             f"cat > {safe_path}",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.DEVNULL,
