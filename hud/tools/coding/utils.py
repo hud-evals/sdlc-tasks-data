@@ -120,9 +120,11 @@ async def write_file_async(path: Path, content: str) -> None:
         ToolError: If file cannot be written
     """
     try:
+        safe_path = shlex.quote(str(path))
         process = await asyncio.create_subprocess_exec(
-            "tee",
-            str(path),
+            "bash",
+            "-lc",
+            f"cat > {safe_path}",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
