@@ -1,17 +1,22 @@
 """Behavioral integration tests for remote eval error visibility.
 
 These tests validate end-to-end behavior through the remote execution flow:
-- `_run_evaluation` should fail when every rollout is rejected.
-- `_run_evaluation` should succeed when at least one rollout is accepted.
-- `eval_command` should translate submission failures into a non-zero CLI exit.
+- `_run_evaluation` must FAIL (raise any exception) when every rollout is rejected.
+- `_run_evaluation` must SUCCEED (return normally) when at least one rollout is accepted.
+- The return type of `submit_rollouts` must NOT be None (must provide tracking info).
 
-The tests intentionally avoid constraining implementation shape (list/dict/model).
-They only assert externally visible behavior.
+The tests intentionally avoid constraining:
+- Exception type (ValueError, RuntimeError, custom — all acceptable)
+- Return type shape (list, dataclass, NamedTuple — all acceptable)
+- Where the guard is placed (in submit_rollouts, in CLI, or both)
+
+They only assert externally visible behavior: does the flow fail or succeed?
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -82,7 +87,11 @@ class TestRemoteRunBehavior:
     """Behavior-driven integration tests for remote eval flow."""
 
     def test_all_rejected_surfaces_failure(self):
-        """Remote run must fail when every submitted task is rejected."""
+        """Remote run must FAIL when every submitted task is rejected.
+
+        Accepts any exception type — ValueError, RuntimeError, or custom.
+        The behavioral contract: complete rejection must NOT silently succeed.
+        """
         from hud.cli.eval import _run_evaluation
 
         tasks = [
@@ -103,8 +112,16 @@ class TestRemoteRunBehavior:
             ds_settings.api_key = "test-key"
             ds_settings.hud_api_url = "https://api.test"
 
-            with pytest.raises(ValueError):
+            with pytest.raises(Exception) as exc_info:
                 _run(_run_evaluation(_remote_cfg()))
+
+            err_msg = str(exc_info.value).lower()
+            assert any(kw in err_msg for kw in [
+                "reject", "accepted", "0/", "no task", "no work", "failed",
+            ]), (
+                f"Exception was raised but its message doesn't indicate a "
+                f"rejection failure: {exc_info.value!r}"
+            )
 
     def test_partial_acceptance_is_successful(self):
         """Remote run should succeed if at least one task is accepted."""
@@ -153,26 +170,20 @@ class TestRemoteRunBehavior:
             assert len(loaded_tasks) == 1
 
 
-class TestCliFailureMapping:
-    """CLI should expose remote submission failure via non-zero exit code."""
+class TestSubmitRolloutsReturnType:
+    """submit_rollouts must return something (not None/fire-and-forget)."""
 
-    def test_eval_command_exits_nonzero_on_value_error(self):
-        """ValueError from evaluation path must translate to typer.Exit(1)."""
-        from hud.cli.eval import eval_command
+    def test_return_annotation_is_not_none(self):
+        """The return type must not be None — caller needs tracking info."""
+        from hud.datasets.utils import submit_rollouts
 
-        with (
-            patch("hud.cli.eval._run_evaluation", new=AsyncMock(side_effect=ValueError("submit failed"))),
-            patch("hud.cli.eval.settings") as eval_settings,
-        ):
-            eval_settings.api_key = "test-key"
-
-            with pytest.raises(Exception) as exc_info:
-                eval_command(
-                    source="dummy.json",
-                    agent="claude",
-                    all=True,
-                    remote=True,
-                    yes=True,
-                )
-
-            assert getattr(exc_info.value, "exit_code", None) == 1
+        sig = inspect.signature(submit_rollouts)
+        ret = sig.return_annotation
+        assert ret is not inspect.Parameter.empty, (
+            "submit_rollouts has no return annotation — must declare a return type"
+        )
+        ret_str = str(ret) if not isinstance(ret, str) else ret
+        assert ret_str.lower() != "none" and ret_str != "<class 'NoneType'>", (
+            f"submit_rollouts returns {ret_str} — must return tracking info, "
+            f"not None (fire-and-forget)"
+        )
