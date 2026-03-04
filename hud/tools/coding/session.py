@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import uuid
 from dataclasses import dataclass
 from typing import Literal
 
@@ -153,18 +154,20 @@ class BashSession:
         assert self._process.stdout
         assert self._process.stderr
 
+        run_sentinel = f"{self._sentinel}{uuid.uuid4().hex}__"
+
         # Send command with sentinel for exit code capture
         # Platform-specific syntax for command chaining and exit code
         if sys.platform == "win32":
             if capture_exit_code:
-                cmd_line = f"{command} & echo {self._sentinel}%errorlevel%\n"
+                cmd_line = f"{command} & echo {run_sentinel}%errorlevel%\n"
             else:
-                cmd_line = f"{command} & echo {self._sentinel}\n"
+                cmd_line = f"{command} & echo {run_sentinel}\n"
         else:
             if capture_exit_code:
-                cmd_line = f"{command}; echo '{self._sentinel}'$?\n"
+                cmd_line = f"{command}; echo '{run_sentinel}'$?\n"
             else:
-                cmd_line = f"{command}; echo '{self._sentinel}'\n"
+                cmd_line = f"{command}; echo '{run_sentinel}'\n"
 
         self._process.stdin.write(cmd_line.encode())
         await self._process.stdin.drain()
@@ -181,9 +184,9 @@ class BashSession:
                     output = self._process.stdout._buffer.decode()  # pyright: ignore[reportAttributeAccessIssue]
                     error = self._process.stderr._buffer.decode()  # pyright: ignore[reportAttributeAccessIssue]
 
-                    if self._sentinel in output:
-                        sentinel_idx = output.index(self._sentinel)
-                        after_sentinel = output[sentinel_idx + len(self._sentinel) :]
+                    if run_sentinel in output:
+                        sentinel_idx = output.index(run_sentinel)
+                        after_sentinel = output[sentinel_idx + len(run_sentinel) :]
                         newline_idx = after_sentinel.find("\n")
 
                         if capture_exit_code:
