@@ -11,14 +11,35 @@ logger = logging.getLogger(__name__)
 
 # Global submission storage
 _SUBMISSION: str | None = None
+_TRACE_SUBMISSIONS: dict[str, str | None] = {}
+
+
+def _current_trace_id() -> str | None:
+    try:
+        from hud.eval.context import get_current_trace_id
+
+        return get_current_trace_id()
+    except Exception:
+        return None
 
 
 def set_submission(value: str | None) -> None:
+    trace_id = _current_trace_id()
+    if trace_id:
+        if value is None:
+            _TRACE_SUBMISSIONS.pop(trace_id, None)
+        else:
+            _TRACE_SUBMISSIONS[trace_id] = value
+        return
+
     global _SUBMISSION
     _SUBMISSION = value
 
 
 def get_submission() -> str | None:
+    trace_id = _current_trace_id()
+    if trace_id:
+        return _TRACE_SUBMISSIONS.get(trace_id)
     return _SUBMISSION
 
 
