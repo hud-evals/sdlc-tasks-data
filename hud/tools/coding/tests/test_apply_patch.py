@@ -383,21 +383,7 @@ class TestApplyPatchTool:
                 tool._validate_path("../outside")
 
     def test_validate_path_traversal_sibling_prefix(self):
-        """Test that path traversal via sibling directory with shared prefix is detected.
-
-        Bug: Path traversal check bypassed via sibling directory prefix.
-
-        The path traversal check `full_path.startswith(self.base_path)` uses string
-        prefix matching, which can be bypassed when sibling directories share a name
-        prefix with the base directory. For example, if base_path is /tmp/myapp and
-        a user provides path ../myapp_sibling/secret.txt, the resolved full_path
-        becomes /tmp/myapp_sibling/secret.txt. The check passes because the string
-        /tmp/myapp_sibling/secret.txt starts with /tmp/myapp, allowing access to
-        files outside the intended sandbox.
-
-        The fix is to ensure a path separator follows the base path
-        (e.g., full_path.startswith(self.base_path + os.sep)) or use os.path.commonpath.
-        """
+        """Test that traversal into a similarly named sibling directory is rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create base directory "myapp" and sibling directory "myapp_sibling"
             base_dir = os.path.join(tmpdir, "myapp")
@@ -411,10 +397,7 @@ class TestApplyPatchTool:
 
             tool = ApplyPatchTool(base_path=base_dir)
 
-            # Attempt to access the sibling directory via path traversal
-            # This should be detected as path traversal, but the bug allows it
-            # because "/tmp/.../myapp_sibling/secret.txt".startswith("/tmp/.../myapp")
-            # returns True due to string prefix matching
+            # Attempt to access the sibling directory via traversal.
             with pytest.raises(DiffError, match="Path traversal detected"):
                 tool._validate_path("../myapp_sibling/secret.txt")
 
