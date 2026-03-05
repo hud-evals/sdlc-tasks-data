@@ -458,19 +458,26 @@ class ApplyPatchTool(BaseTool):
             description="Create, update, and delete files using V4A diff format",
         )
         self.base_path = os.path.abspath(base_path)
+        # Keep a canonical sandbox root so symlinked base paths are handled safely.
+        self.base_path_real = os.path.realpath(self.base_path)
 
     def _validate_path(self, path: str) -> str:
         """Validate and resolve a path, preventing directory traversal."""
         if path.startswith("/"):
             raise DiffError(f"Absolute paths are not allowed: {path}")
 
-        # Normalize and resolve
+        # Keep the caller-facing path normalized while validating on canonical paths.
         full_path = os.path.normpath(os.path.join(self.base_path, path))
+        full_path_real = os.path.realpath(full_path)
 
-        # Check for directory traversal
-        # Use base_path + os.sep to prevent sibling directory prefix bypass
-        # e.g., /tmp/myapp_sibling shouldn't match base_path /tmp/myapp
-        if full_path != self.base_path and not full_path.startswith(self.base_path + os.sep):
+        # Check canonical containment under sandbox root.
+        try:
+            is_within_base = (
+                os.path.commonpath([self.base_path_real, full_path_real]) == self.base_path_real
+            )
+        except ValueError:
+            is_within_base = False
+        if not is_within_base:
             raise DiffError(f"Path traversal detected: {path}")
 
         return full_path
