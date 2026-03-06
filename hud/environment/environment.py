@@ -434,6 +434,7 @@ class Environment(
         self._tool_routing_built = False
         self._prompt_routing_built = False
         self._resource_routing_built = False
+        self._active_session = None  # Clear stale scenario state
 
     async def run_async(
         self,
@@ -595,9 +596,10 @@ class Environment(
     # =========================================================================
 
     async def list_resources(self) -> list[mcp_types.Resource]:
-        """Refresh resources from all connections."""
+        """Refresh resources from all connections and rebuild resource routing."""
         if self._connections:
             await asyncio.gather(*[c.list_resources() for c in self._connections.values()])
+        await self._build_resource_routing()
         return self._router.resources
 
     async def read_resource(
@@ -642,9 +644,10 @@ class Environment(
     # =========================================================================
 
     async def list_prompts(self) -> list[mcp_types.Prompt]:
-        """Refresh prompts from all connections."""
+        """Refresh prompts from all connections and rebuild prompt routing."""
         if self._connections:
             await asyncio.gather(*[c.list_prompts() for c in self._connections.values()])
+        await self._build_prompt_routing()
         return self._router.prompts
 
     async def get_prompt(

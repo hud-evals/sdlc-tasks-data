@@ -135,6 +135,22 @@ class Connector:
         self._prompts_cache = None
         self._resources_cache = None
 
+    async def reconnect(self) -> None:
+        """Disconnect, reconnect, and re-fetch all MCP primitives.
+
+        Convenience method that handles the full reconnection lifecycle:
+        disconnect → connect → re-fetch tools/prompts/resources.
+        """
+        import asyncio
+
+        await self.disconnect()
+        await self.connect()
+        await asyncio.gather(
+            self.list_tools(),
+            self.list_prompts(),
+            self.list_resources(),
+        )
+
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Fetch tools from server, apply filters/transforms/prefix, and cache.
 
