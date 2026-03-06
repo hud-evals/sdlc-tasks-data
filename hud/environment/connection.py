@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import mcp.types as mcp_types
 
@@ -141,9 +141,10 @@ class Connector:
         Always fetches fresh data from the server (no caching check).
         The result is cached for use by router.build() via cached_tools property.
         """
-        if self.client is None:
+        client = self.client
+        if client is None:
             raise RuntimeError("Not connected - call connect() first")
-        tools = await self.client.list_tools()
+        tools = await client.list_tools()
 
         result: list[mcp_types.Tool] = []
         for tool in tools:
@@ -165,21 +166,18 @@ class Connector:
                 transformed = self.config.transform(fastmcp_tool)
                 if transformed is None:
                     continue
-                tool = mcp_types.Tool(
-                    name=transformed.name,
-                    description=transformed.description,
-                    inputSchema=transformed.parameters,
+                tool = tool.model_copy(
+                    update={
+                        "name": transformed.name,
+                        "description": transformed.description,
+                        "inputSchema": transformed.parameters,
+                    }
                 )
 
             # Apply prefix
-            name = f"{self.config.prefix}_{tool.name}" if self.config.prefix else tool.name
-            result.append(
-                mcp_types.Tool(
-                    name=name,
-                    description=tool.description,
-                    inputSchema=tool.inputSchema,
-                )
-            )
+            if self.config.prefix:
+                tool = tool.model_copy(update={"name": f"{self.config.prefix}_{tool.name}"})
+            result.append(tool)
 
         self._tools_cache = result
         return result
@@ -188,7 +186,8 @@ class Connector:
         self, name: str, arguments: dict[str, Any] | None = None
     ) -> mcp_types.CallToolResult:
         """Call a tool, stripping prefix if needed."""
-        if self.client is None:
+        client = self.client
+        if client is None:
             raise RuntimeError("Not connected - call connect() first")
         # Strip prefix when calling remote
         if self.config.prefix and name.startswith(f"{self.config.prefix}_"):
@@ -200,15 +199,19 @@ class Connector:
         trace_id = get_current_trace_id()
         meta = {"_hud_trace_id": trace_id} if trace_id else None
 
-        client = cast("Any", self.client)
         if meta:
             try:
-                result = await client.call_tool(name=name, arguments=args, meta=meta)
-            except TypeError:
-                # Fallback for clients that don't accept meta
+                meta_kwargs: dict[str, Any] = {"meta": meta}
+                result = await client.call_tool(name=name, arguments=args, **meta_kwargs)
+            except TypeError as e:
+                if "unexpected keyword argument" not in str(e):
+                    raise
                 try:
-                    result = await client.call_tool(name=name, arguments=args, _meta=meta)
-                except TypeError:
+                    meta_kwargs = {"_meta": meta}
+                    result = await client.call_tool(name=name, arguments=args, **meta_kwargs)
+                except TypeError as e2:
+                    if "unexpected keyword argument" not in str(e2):
+                        raise
                     result = await client.call_tool(name=name, arguments=args)
         else:
             result = await client.call_tool(name=name, arguments=args)
