@@ -10,90 +10,114 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+from contextlib import contextmanager
+
+from hud.eval.context import EvalContext
+from hud.eval.parallel import log_eval_stats
+from hud.shared.exceptions import HudClientError, HudException
+
+
+def _run(coro):
+    """Run an async test helper without requiring pytest-asyncio."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+def _ctx(*, reward: float | None, error: BaseException | None = None) -> EvalContext:
+    """Create a real EvalContext with the outcome fields the summary uses."""
+    ctx = EvalContext(name="eval", trace=False, quiet=True)
+    ctx.reward = reward
+    ctx.error = error
+    return ctx
+
+
+def _classify(exc: BaseException):
+    return HudException._analyze_exception(exc, str(exc))
+
+
+@contextmanager
+def _capture_parallel_log():
+    logger = logging.getLogger("hud.eval.parallel")
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    previous_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        yield stream
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+
+
+async def _run_parallel_case(monkeypatch, body, *, group: int = 3, max_concurrent: int | None = None):
+    import importlib
+
+    manager = importlib.import_module("hud.eval.manager")
+
+    monkeypatch.setattr(manager, "find_user_frame", lambda: object())
+    monkeypatch.setattr(
+        manager,
+        "get_with_block_body",
+        lambda _frame: ("await __parallel_body__(ctx)", {"__parallel_body__": body}, "ctx"),
+    )
+    monkeypatch.setattr(manager, "print_eval_stats", lambda *args, **kwargs: None)
+
+    return await manager._run_parallel_eval(
+        tasks=[],
+        variant_combos=[{}],
+        group=group,
+        group_ids=None,
+        job_id="job-123",
+        api_key=None,
+        code_snippet="hidden test",
+        max_concurrent=max_concurrent,
+        trace=False,
+        quiet=True,
+    )
 
 
 class TestParallelFailureContainment:
     """One failed child run must not cancel or erase sibling work."""
 
-    def test_error_containment_in_source(self):
-        """The parallel execution path must contain individual task failures.
+    def test_single_failure_preserves_siblings_on_real_manager_path(self, monkeypatch):
+        """Run the actual fanout helper and prove siblings still finish."""
 
-        Without containment, one child's exception propagates through
-        asyncio.gather and cancels all siblings — producing fewer
-        results than expected.
-        """
-        with open("hud/eval/manager.py") as f:
-            source = f.read()
-
-        has_return_exceptions = "return_exceptions" in source
-
-        has_try_except = False
-        lines = source.split("\n")
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith("except") and "Exception" in stripped:
-                nearby = "\n".join(lines[max(0, i):min(len(lines), i + 5)])
-                if ".error" in nearby or "warning" in nearby.lower():
-                    has_try_except = True
-                    break
-
-        assert has_return_exceptions or has_try_except, (
-            "manager.py lacks error containment for parallel evaluation. "
-            "A single child failure will propagate through asyncio.gather "
-            "and cancel all sibling tasks, producing incomplete fanout results."
-        )
-
-    def test_single_failure_preserves_siblings(self):
-        """Behaviorally verify that one failing coroutine does not cancel others."""
         async def _test():
-            results = []
+            started: set[int] = set()
+            finished: list[int] = []
+            all_started = asyncio.Event()
 
-            async def succeed(val):
+            async def body(ctx):
+                started.add(ctx.index)
+                if len(started) == 3:
+                    all_started.set()
+
+                await asyncio.wait_for(all_started.wait(), timeout=1)
+
+                if ctx.index == 1:
+                    raise RuntimeError("child failure")
+
                 await asyncio.sleep(0.01)
-                results.append(val)
-                return val
+                ctx.reward = {0: 1.0, 2: 0.5}[ctx.index]
+                finished.append(ctx.index)
 
-            async def fail():
-                raise ValueError("child failure")
+            results = await _run_parallel_case(monkeypatch, body, group=3)
+            by_index = {ctx.index: ctx for ctx in results}
 
-            coros = [succeed(1), fail(), succeed(3)]
-            completed = await asyncio.gather(*coros, return_exceptions=True)
+            assert sorted(by_index) == [0, 1, 2], "All child runs should still be represented."
+            assert sorted(finished) == [0, 2], "Healthy siblings should still finish their work."
+            assert by_index[0].error is None
+            assert by_index[2].error is None
+            assert by_index[1].error is not None, "The failing child should still be surfaced as a failed result."
+            assert by_index[0].reward == 1.0
+            assert by_index[1].reward is None
+            assert by_index[2].reward == 0.5
 
-            successes = [r for r in completed if not isinstance(r, Exception)]
-            assert len(successes) >= 2, (
-                f"Expected at least 2 successes but got {len(successes)}. "
-                "gather must tolerate individual child failures."
-            )
-
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(_test())
-        finally:
-            loop.close()
-
-    def test_failed_child_produces_result(self):
-        """A failed child must produce an exception result, not disappear."""
-        async def _test():
-            async def fail():
-                raise RuntimeError("child error")
-
-            async def succeed():
-                return "ok"
-
-            results = await asyncio.gather(
-                succeed(), fail(), succeed(), return_exceptions=True
-            )
-            assert len(results) == 3, (
-                f"Expected 3 results (including failures) but got {len(results)}"
-            )
-            errors = [r for r in results if isinstance(r, Exception)]
-            assert len(errors) == 1
-
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(_test())
-        finally:
-            loop.close()
+        _run(_test())
 
 
 class TestParallelExceptionClassification:
@@ -101,143 +125,68 @@ class TestParallelExceptionClassification:
 
     def test_cancelled_not_client_error(self):
         """CancelledError must NOT be reclassified as HudClientError."""
-        from hud.shared.exceptions import HudClientError, HudException
-
-        cancelled = asyncio.CancelledError(
-            "task cancelled: event loop shutting down"
-        )
-        result = HudException._analyze_exception(cancelled, str(cancelled))
+        cancelled = asyncio.CancelledError("task cancelled: event loop shutting down")
+        result = _classify(cancelled)
 
         assert not isinstance(result, HudClientError), (
             f"CancelledError was misclassified as HudClientError: {result!r}. "
-            "The 'event loop' pattern in _analyze_exception is too broad."
+            "Cancellation-derived noise should not masquerade as client initialization failures."
         )
 
     def test_real_client_error_still_detected(self):
         """Genuine 'not initialized' errors must still become HudClientError."""
-        from hud.shared.exceptions import HudClientError, HudException
-
-        real_error = RuntimeError(
-            "MCP client not initialized — call connect() first"
-        )
-        result = HudException._analyze_exception(real_error, str(real_error))
+        result = _classify(RuntimeError("MCP client not initialized - call connect() first"))
 
         assert isinstance(result, HudClientError), (
-            f"Genuine client error was not classified as HudClientError: "
-            f"{type(result).__name__}"
+            f"Genuine client error was not classified as HudClientError: {type(result).__name__}"
         )
 
     def test_event_loop_closed_still_detected(self):
         """'event loop is closed' errors must still become HudClientError."""
-        from hud.shared.exceptions import HudClientError, HudException
-
-        closed_error = RuntimeError("event loop is closed")
-        result = HudException._analyze_exception(closed_error, str(closed_error))
+        result = _classify(RuntimeError("event loop is closed"))
 
         assert isinstance(result, HudClientError), (
-            f"'event loop is closed' was not classified as HudClientError: "
-            f"{type(result).__name__}"
+            f"'event loop is closed' was not classified as HudClientError: {type(result).__name__}"
         )
 
 
 class TestParallelHealthSummary:
-    """Failed/cancelled children must remain in the denominator.
+    """Failed/cancelled children must remain in the denominator."""
 
-    When the health summary excludes failed/cancelled runs from the
-    denominator, it overstates batch health — the team sees 100%
-    success when real results are far worse.
-    """
+    def test_mixed_outcomes_report_truthful_health(self):
+        """Mixed outcomes should report both the real success rate and mean reward."""
+        completed = [
+            _ctx(reward=1.0),
+            _ctx(reward=None, error=RuntimeError("boom")),
+            _ctx(reward=0.5),
+        ]
 
-    def test_failed_children_in_denominator(self):
-        """log_eval_stats must include failed children in the total count."""
-        from unittest.mock import MagicMock
+        with _capture_parallel_log() as stream:
+            log_eval_stats(completed)
+        output = stream.getvalue()
 
-        from hud.eval.parallel import log_eval_stats
-
-        ctx_ok = MagicMock()
-        ctx_ok.reward = 0.8
-        ctx_ok.success = True
-
-        ctx_fail = MagicMock()
-        ctx_fail.reward = None
-        ctx_fail.success = False
-
-        handler = logging.StreamHandler(stream=io.StringIO())
-        handler.setLevel(logging.DEBUG)
-        logger = logging.getLogger("hud.eval.parallel")
-        logger.addHandler(handler)
-        logger.setLevel(logging.DEBUG)
-
-        try:
-            log_eval_stats([ctx_ok, ctx_fail, ctx_ok])
-            output = handler.stream.getvalue()
-        finally:
-            logger.removeHandler(handler)
-
-        assert "2/3" in output, (
-            f"Health summary should report 2/3 succeeded but got: {output!r}. "
-            "Failed children are being excluded from the denominator, "
-            "making batch health look better than reality."
+        assert "2/3 succeeded" in output, (
+            f"Health summary should report 2/3 succeeded but got: {output!r}."
+        )
+        assert "mean_reward=0.500" in output, (
+            f"Mean reward should be 0.500 ((1.0 + 0.0 + 0.5) / 3) but got: {output!r}."
         )
 
-    def test_mean_reward_includes_failures_as_zero(self):
-        """Mean reward must treat failed children as 0.0, not exclude them."""
-        from unittest.mock import MagicMock
+    def test_all_failed_reports_zero_of_total(self):
+        """When all children fail, health must still report the full batch size."""
+        completed = [
+            _ctx(reward=None, error=RuntimeError("boom-1")),
+            _ctx(reward=None, error=RuntimeError("boom-2")),
+            _ctx(reward=None, error=RuntimeError("boom-3")),
+        ]
 
-        from hud.eval.parallel import log_eval_stats
+        with _capture_parallel_log() as stream:
+            log_eval_stats(completed)
+        output = stream.getvalue()
 
-        ctx_ok = MagicMock()
-        ctx_ok.reward = 1.0
-        ctx_ok.success = True
-
-        ctx_fail = MagicMock()
-        ctx_fail.reward = None
-        ctx_fail.success = False
-
-        handler = logging.StreamHandler(stream=io.StringIO())
-        handler.setLevel(logging.DEBUG)
-        logger = logging.getLogger("hud.eval.parallel")
-        logger.addHandler(handler)
-        logger.setLevel(logging.DEBUG)
-
-        try:
-            log_eval_stats([ctx_ok, ctx_fail])
-            output = handler.stream.getvalue()
-        finally:
-            logger.removeHandler(handler)
-
-        assert "0.500" in output, (
-            f"Mean reward should be 0.500 (1.0 + 0.0 / 2) but got: {output!r}. "
-            "Failed children with reward=None must be counted as 0.0 in the "
-            "mean, not excluded from the calculation."
+        assert "0/3 succeeded" in output, (
+            f"Health summary should report 0/3 when all fail but got: {output!r}."
         )
-
-    def test_all_failed_reports_zero(self):
-        """When all children fail, health must report 0/N and mean 0.000."""
-        from unittest.mock import MagicMock
-
-        from hud.eval.parallel import log_eval_stats
-
-        ctx_fail = MagicMock()
-        ctx_fail.reward = None
-        ctx_fail.success = False
-
-        handler = logging.StreamHandler(stream=io.StringIO())
-        handler.setLevel(logging.DEBUG)
-        logger = logging.getLogger("hud.eval.parallel")
-        logger.addHandler(handler)
-        logger.setLevel(logging.DEBUG)
-
-        try:
-            log_eval_stats([ctx_fail, ctx_fail, ctx_fail])
-            output = handler.stream.getvalue()
-        finally:
-            logger.removeHandler(handler)
-
-        assert "0/3" in output, (
-            f"Health summary should report 0/3 when all fail but got: {output!r}. "
-            "The denominator must always reflect the total number of children."
-        )
-        assert "0.000" in output, (
+        assert "mean_reward=0.000" in output, (
             f"Mean reward should be 0.000 when all fail but got: {output!r}."
         )
