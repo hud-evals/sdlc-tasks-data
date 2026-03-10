@@ -1,0 +1,205 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "HUD",
+  "theme": "maple",
+  "logo": {
+    "light": "/logo/hud_logo.svg",
+    "dark": "/logo/hud_logo_dark.svg"
+  },
+  "favicon": "/favicon.ico",
+  "colors": {
+    "primary": "#c0960c",
+    "light": "#ffffff",
+    "dark": "#5b21b6"
+  },
+  "icons": {
+    "library": "fontawesome"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Discord",
+        "href": "https://discord.gg/wkjtmHYYjm",
+        "icon": "discord",
+        "iconType": "brands"
+      },
+      {
+        "label": "X",
+        "href": "https://x.com/hud_evals",
+        "icon": "x-twitter",
+        "iconType": "brands"
+      }
+    ],
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/hud-evals/hud-python"
+    }
+  },
+  "topbarCtaButton": {
+    "name": "Dashboard",
+    "url": "https://hud.ai"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "SDK",
+        "icon": "code",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "index",
+              "llm-quickstart"
+            ]
+          },
+          {
+            "group": "Essentials",
+            "pages": [
+              "quick-links/models",
+              "quick-links/environments",
+              "quick-links/deploy",
+              "quick-links/evals"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/integrations",
+              "guides/sandboxing",
+              "guides/best-practices",
+              "migration"
+            ]
+          },
+          {
+            "group": "Cookbooks",
+            "pages": [
+              "cookbooks/codex-coding",
+              "cookbooks/ops-diagnostics",
+              "cookbooks/opencode-agent"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/testing-environments",
+              "advanced/harbor-convert"
+            ]
+          },
+          {
+            "group": "Tools",
+            "pages": [
+              "tools/index",
+              "tools/agents",
+              "tools/computer",
+              "tools/coding",
+              "tools/filesystem",
+              "tools/memory",
+              "tools/web",
+              "tools/grounding"
+            ]
+          },
+          {
+            "group": "SDK Reference",
+            "pages": [
+              "reference/evals",
+              "reference/environments",
+              "reference/tools",
+              "reference/mcpserver",
+              "reference/agents",
+              "reference/types"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "reference/cli/overview",
+              "reference/cli/init",
+              "reference/cli/dev",
+              "reference/cli/build",
+              "reference/cli/deploy",
+              "reference/cli/link",
+              "reference/cli/push",
+              "reference/cli/analyze",
+              "reference/cli/debug",
+              "reference/cli/run",
+              "reference/cli/eval",
+              "reference/cli/rft",
+              "reference/cli/misc"
+            ]
+          },
+          {
+            "group": "Community",
+            "pages": [
+              "contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Platform",
+        "icon": "building",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "platform/index",
+              "platform/mcp"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "platform/models",
+              "platform/environments",
+              "platform/tasksets"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "platform/publishing-leaderboards",
+              "platform/subagent"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "platform/slack"
+            ]
+          },
+          {
+            "group": "How We Use HUD on HUD",
+            "pages": [
+              "platform/internal/trace-analysis"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footerSocials": {
+    "github": "https://github.com/hud-evals/hud-python",
+    "discord": "https://discord.gg/wkjtmHYYjm",
+    "x": "https://x.com/hud_evals"
+  },
+  "analytics": {
+    "ga4": {
+      "measurementId": "G-XXXXXXXXXX"
+    }
+  },
+  "seo": {
+    "indexHiddenPages": false,
+    "metatags": {
+      "charset": "UTF-8",
+      "viewport": "width=device-width, initial-scale=1",
+      "robots": "index, follow",
+      "description": "OSS Evaluations and RL Environments SDK for AI Agent Developers.",
+      "og:title": "HUD Documentation — Evaluations and RL Environments.",
+      "og:description": "OSS Evaluations and RL Environments SDK",
+      "og:site_name": "hud",
+      "twitter:site": "@hud_evals",
+      "twitter:title": "hud docs",
+      "twitter:description": "OSS Evaluations and RL Environments SDK"
+    }
+  }
+}
