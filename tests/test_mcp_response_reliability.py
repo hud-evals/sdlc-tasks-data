@@ -1,9 +1,16 @@
-"""Tests for MCP response reliability: exception propagation, timeout
-configuration, and transport-level retry behavior."""
+"""Behavioral tests for MCP response reliability."""
+
+from __future__ import annotations
 
 import asyncio
-import pytest
+import json
+import os
+from contextlib import contextmanager
+from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 def _run(coro):
@@ -15,364 +22,266 @@ def _run(coro):
         loop.close()
 
 
-def _make_http_status_error(status_code: int = 502):
-    """Create a realistic httpx.HTTPStatusError for testing."""
-    try:
+class _FakeResponse:
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        body: bytes | None = None,
+        read_error: Exception | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self._body = body or b""
+        self._read_error = read_error
+        self.headers = headers or {"content-type": "application/json"}
+
+    async def aread(self) -> bytes:
+        if self._read_error is not None:
+            raise self._read_error
+        return self._body
+
+    async def aclose(self) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        if self.status_code < 400:
+            return
+
         import httpx
+
         request = httpx.Request("POST", "https://mcp.hud.ai/v3/mcp")
-        response = httpx.Response(status_code, request=request)
-        return httpx.HTTPStatusError(
-            f"Server error '{status_code}'",
+        response = httpx.Response(self.status_code, request=request)
+        raise httpx.HTTPStatusError(
+            f"Server error '{self.status_code}'",
             request=request,
             response=response,
         )
-    except ImportError:
-        err = Exception(f"Server error '{status_code}'")
-        err.response = MagicMock(status_code=status_code)
-        return err
 
 
-# ---------------------------------------------------------------------------
-# 1. JSON response exception propagation
-# ---------------------------------------------------------------------------
+class _FakeStreamContext:
+    def __init__(self, response: _FakeResponse) -> None:
+        self._response = response
 
-class TestJsonResponseExceptionPropagation:
-    """After applying patches, _handle_json_response must re-raise exceptions
-    so callers get proper errors instead of hanging indefinitely waiting for
-    a response future that is never fulfilled."""
+    async def __aenter__(self) -> _FakeResponse:
+        return self._response
 
-    def test_parse_error_propagates_to_caller(self):
-        """When _handle_json_response receives a response with invalid JSON,
-        the ValidationError should propagate to the caller — not be silently
-        sent to the read stream where it gets dropped."""
-        from hud.patches.mcp_patches import apply_all_patches
-        apply_all_patches()
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
 
-        from mcp.client.streamable_http import StreamableHTTPTransport
 
-        class BadJsonResponse:
-            async def aread(self) -> bytes:
-                return b"{{invalid json content"
+class _FakeClient:
+    def __init__(self, responses: list[_FakeResponse]) -> None:
+        self._responses = list(responses)
+        self.calls = 0
 
-        class NoopWriter:
-            async def send(self, msg: object) -> None:
-                pass
+    def stream(self, method: str, url: str, json=None, headers=None):  # noqa: A002
+        if self.calls >= len(self._responses):
+            raise AssertionError("No fake responses left for transport request")
+        response = self._responses[self.calls]
+        self.calls += 1
+        return _FakeStreamContext(response)
 
-        async def _test():
-            with pytest.raises(Exception):
-                await StreamableHTTPTransport._handle_json_response(
-                    object(), BadJsonResponse(), NoopWriter(),
-                    is_initialization=False,
+
+def _success_response(request_id: int = 0) -> _FakeResponse:
+    return _FakeResponse(
+        body=json.dumps({"jsonrpc": "2.0", "id": request_id, "result": {}}).encode(),
+        headers={"content-type": "application/json"},
+    )
+
+
+@contextmanager
+def _patched_runtime_settings(*, client_timeout: int, sse_read_timeout: int):
+    import hud.settings as settings_module
+
+    fake_settings = SimpleNamespace(
+        client_timeout=client_timeout,
+        sse_read_timeout=sse_read_timeout,
+    )
+
+    with (
+        patch.dict(
+            os.environ,
+            {
+                "HUD_CLIENT_TIMEOUT": str(client_timeout),
+                "HUD_SSE_READ_TIMEOUT": str(sse_read_timeout),
+            },
+            clear=False,
+        ),
+        patch.object(settings_module, "settings", fake_settings),
+        patch.object(settings_module, "get_settings", return_value=fake_settings),
+    ):
+        yield fake_settings
+
+
+async def _send_ping_through_transport(
+    responses: list[_FakeResponse],
+    *,
+    request_timeout_seconds: float = 0.2,
+    client_timeout_seconds: float = 2.0,
+):
+    import anyio
+    from mcp.client.session import ClientSession
+    from mcp.client.streamable_http import StreamableHTTPTransport
+
+    from hud.patches.mcp_patches import apply_all_patches
+    from hud.settings import settings
+
+    apply_all_patches()
+
+    transport = StreamableHTTPTransport.__new__(StreamableHTTPTransport)
+    transport.url = "https://mcp.hud.ai/v3/mcp"
+    transport.headers = {}
+    transport.timeout = 30
+    transport.auth = None
+    transport.session_id = "test-session"
+    transport.protocol_version = None
+    transport.request_headers = {}
+    transport.sse_read_timeout = 30
+    transport._is_initialized_notification = lambda msg: False
+
+    fake_client = _FakeClient(responses)
+    write_send, write_recv = anyio.create_memory_object_stream(10)
+    read_send, read_recv = anyio.create_memory_object_stream(10)
+    original_client_timeout = settings.client_timeout
+
+    try:
+        settings.client_timeout = client_timeout_seconds
+        result = None
+        caught = None
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(
+                transport.post_writer,
+                fake_client,
+                write_recv,
+                read_send,
+                write_send.clone(),
+                lambda: None,
+                tg,
+            )
+
+            try:
+                async with ClientSession(read_recv, write_send) as session:
+                    import mcp.types as types
+
+                    result = await session.send_request(
+                        types.ClientRequest(types.PingRequest()),
+                        types.EmptyResult,
+                        request_read_timeout_seconds=timedelta(seconds=request_timeout_seconds),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                caught = exc
+            finally:
+                await write_send.aclose()
+                tg.cancel_scope.cancel()
+
+        if caught is not None:
+            if isinstance(caught, BaseExceptionGroup) and len(caught.exceptions) == 1:
+                raise caught.exceptions[0]
+            raise caught
+
+        return result, fake_client.calls
+    finally:
+        settings.client_timeout = original_client_timeout
+
+
+class TestJsonResponseReliability:
+    """Invalid JSON/read failures should fail the caller promptly, not hang."""
+
+    def test_invalid_json_fails_promptly_without_request_timeout(self):
+        import httpx
+        from mcp.shared.exceptions import McpError
+
+        with pytest.raises(McpError) as excinfo:
+            _run(
+                _send_ping_through_transport(
+                    [_FakeResponse(body=b"{{invalid json", headers={"content-type": "application/json"})]
                 )
+            )
 
-        _run(_test())
+        assert excinfo.value.error.code != httpx.codes.REQUEST_TIMEOUT, (
+            "Invalid JSON should surface as a transport failure, not a request timeout"
+        )
 
-    def test_read_error_propagates_to_caller(self):
-        """When response.aread() raises a read error (e.g., connection reset),
-        the error should propagate to the caller — not be silently swallowed."""
-        from hud.patches.mcp_patches import apply_all_patches
-        apply_all_patches()
+    def test_read_error_fails_promptly_without_request_timeout(self):
+        import httpx
+        from mcp.shared.exceptions import McpError
 
-        from mcp.client.streamable_http import StreamableHTTPTransport
-
-        class ReadErrorResponse:
-            async def aread(self) -> bytes:
-                raise IOError("Connection reset by peer during response read")
-
-        class NoopWriter:
-            async def send(self, msg: object) -> None:
-                pass
-
-        async def _test():
-            with pytest.raises((IOError, Exception)):
-                await StreamableHTTPTransport._handle_json_response(
-                    object(), ReadErrorResponse(), NoopWriter(),
-                    is_initialization=False,
+        with pytest.raises(McpError) as excinfo:
+            _run(
+                _send_ping_through_transport(
+                    [
+                        _FakeResponse(
+                            read_error=IOError("Connection reset by peer during response read"),
+                            headers={"content-type": "application/json"},
+                        )
+                    ]
                 )
+            )
 
-        _run(_test())
+        assert excinfo.value.error.code != httpx.codes.REQUEST_TIMEOUT, (
+            "Read errors should surface as a transport failure, not a request timeout"
+        )
 
-
-# ---------------------------------------------------------------------------
-# 2. Timeout configuration separation
-# ---------------------------------------------------------------------------
 
 class TestTimeoutConfiguration:
-    """client_timeout (total session lifetime) and sse_read_timeout
-    (per-message read timeout) must be independently configurable in
-    settings. A value of 0 for sse_read_timeout must mean 'no timeout',
-    not a literal 0-second timeout that fails instantly."""
+    """Remote transport should honor a dedicated SSE timeout budget."""
 
-    def test_settings_has_separate_sse_read_timeout_field(self):
-        """Settings must expose sse_read_timeout as a field that is
-        independent from client_timeout."""
-        from hud.settings import Settings
-        fields = Settings.model_fields
-        assert "sse_read_timeout" in fields, (
-            "Settings must define sse_read_timeout as a separate field "
-            "from client_timeout"
-        )
+    def test_connect_mcp_uses_dedicated_sse_timeout(self):
+        with patch("hud.environment.connectors.mcp_config._build_transport") as mock_build:
+            with _patched_runtime_settings(client_timeout=900, sse_read_timeout=37):
+                from hud.environment.connectors.mcp_config import MCPConfigConnectorMixin
 
-    def test_connect_mcp_uses_sse_read_timeout_setting_not_client_timeout(self):
-        """connect_mcp() must pass settings.sse_read_timeout through to the
-        transport instead of deriving the transport timeout from
-        settings.client_timeout."""
-        with patch(
-            "hud.environment.connectors.mcp_config._build_transport"
-        ) as mock_build, patch(
-            "hud.settings.settings"
-        ) as mock_settings:
-            mock_settings.client_timeout = 900
-            mock_settings.sse_read_timeout = 37
-            mock_build.return_value = MagicMock()
+                mock_build.return_value = MagicMock()
+                mixin = MCPConfigConnectorMixin.__new__(MCPConfigConnectorMixin)
+                mixin._add_connection = MagicMock()
+                mixin.connect_mcp({"test": {"url": "https://mcp.hud.ai/v3/mcp"}})
 
-            from hud.environment.connectors.mcp_config import MCPConfigConnectorMixin
-
-            mixin = MCPConfigConnectorMixin.__new__(MCPConfigConnectorMixin)
-            mixin._add_connection = MagicMock()
-
-            mixin.connect_mcp(
-                {"test": {"url": "https://mcp.hud.ai/v3/mcp"}}
-            )
-
-            built_config = mock_build.call_args[0][0]
-            assert built_config["sse_read_timeout"] == 37, (
-                "connect_mcp() must pass settings.sse_read_timeout through to the "
-                "transport instead of deriving it from settings.client_timeout"
-            )
+        built_config = mock_build.call_args[0][0]
+        assert built_config["sse_read_timeout"] == 37
 
     def test_zero_sse_timeout_becomes_none(self):
-        """When sse_read_timeout=0 (meaning 'no timeout'), connect_mcp
-        must NOT pass a literal 0 to the transport. It should convert 0
-        to None so the transport has no read timeout."""
-        with patch(
-            "hud.environment.connectors.mcp_config._build_transport"
-        ) as mock_build, patch(
-            "hud.settings.settings"
-        ) as mock_settings:
-            mock_settings.sse_read_timeout = 0
-            mock_settings.client_timeout = 900
-            mock_build.return_value = MagicMock()
+        with patch("hud.environment.connectors.mcp_config._build_transport") as mock_build:
+            with _patched_runtime_settings(client_timeout=900, sse_read_timeout=0):
+                from hud.environment.connectors.mcp_config import MCPConfigConnectorMixin
 
-            from hud.environment.connectors.mcp_config import MCPConfigConnectorMixin
+                mock_build.return_value = MagicMock()
+                mixin = MCPConfigConnectorMixin.__new__(MCPConfigConnectorMixin)
+                mixin._add_connection = MagicMock()
+                mixin.connect_mcp({"test": {"url": "https://mcp.hud.ai/v3/mcp"}})
 
-            mixin = MCPConfigConnectorMixin.__new__(MCPConfigConnectorMixin)
-            mixin._add_connection = MagicMock()
+        built_config = mock_build.call_args[0][0]
+        assert built_config.get("sse_read_timeout") is None
 
-            mixin.connect_mcp(
-                {"test": {"url": "https://mcp.hud.ai/v3/mcp"}}
-            )
-
-            built_config = mock_build.call_args[0][0]
-            timeout = built_config.get("sse_read_timeout")
-            assert timeout is None, (
-                "sse_read_timeout=0 must mean 'no read timeout' and be converted "
-                f"to None before constructing the transport, but got {timeout}"
-            )
-
-
-# ---------------------------------------------------------------------------
-# 3. Transport-level 5xx retry
-# ---------------------------------------------------------------------------
 
 class TestTransportRetryOn5xx:
-    """Transport-level 502/503/504 HTTP status errors must be retried
-    with backoff by the post_writer retry loop. Non-retryable errors
-    (e.g., 400) should propagate immediately without retry."""
+    """Transient gateway failures should recover; client errors should not."""
 
-    def test_502_triggers_retry(self):
-        """When _handle_post_request raises HTTPStatusError(502), the
-        patched post_writer retry loop should retry instead of failing
-        immediately."""
-        import httpx
-        from hud.patches.mcp_patches import apply_all_patches
-        apply_all_patches()
-
-        from mcp.client.streamable_http import StreamableHTTPTransport
-        from mcp.types import JSONRPCMessage, JSONRPCRequest
-        from mcp.shared.message import SessionMessage
-
-        transport = StreamableHTTPTransport.__new__(StreamableHTTPTransport)
-        transport.session_id = "test"
-        transport.request_headers = {}
-        transport.sse_read_timeout = 30
-        transport._is_initialized_notification = lambda msg: False
-
-        call_count = 0
-
-        async def mock_handle_post(ctx):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise _make_http_status_error(502)
-
-        transport._handle_post_request = mock_handle_post
-
-        request_msg = JSONRPCMessage(JSONRPCRequest(
-            jsonrpc="2.0", id=1, method="tools/call",
-            params={"name": "test_tool", "arguments": {}},
-        ))
-        session_msg = SessionMessage(request_msg)
-
-        async def _test():
-            import anyio
-
-            write_send, write_recv = anyio.create_memory_object_stream(10)
-            read_send, read_recv = anyio.create_memory_object_stream(10)
-
-            await write_send.send(session_msg)
-            await write_send.aclose()
-
-            async with anyio.create_task_group() as tg:
-                try:
-                    await transport.post_writer(
-                        MagicMock(), write_recv, read_send,
-                        write_send, lambda: None, tg,
-                    )
-                except Exception:
-                    pass
-
-        from hud.settings import settings
-        original = settings.client_timeout
-        settings.client_timeout = 10
-        try:
-            _run(asyncio.wait_for(_test(), timeout=15))
-        except asyncio.TimeoutError:
-            pass
-        finally:
-            settings.client_timeout = original
-
-        assert call_count >= 2, (
-            f"502 should trigger retry, but _handle_post_request was called "
-            f"only {call_count} time(s)"
+    @pytest.mark.parametrize("status_code", [502, 503, 504])
+    def test_transient_5xx_eventually_succeeds(self, status_code: int):
+        result, call_count = _run(
+            _send_ping_through_transport(
+                [
+                    _FakeResponse(status_code=status_code),
+                    _success_response(),
+                ],
+                request_timeout_seconds=1.2,
+            )
         )
 
-    def test_400_not_retried(self):
-        """A 400 Bad Request should NOT be retried — it should propagate
-        immediately via send_error_response."""
-        import httpx
-        from hud.patches.mcp_patches import apply_all_patches
-        apply_all_patches()
+        assert result is not None
+        assert call_count >= 2
 
-        from mcp.client.streamable_http import StreamableHTTPTransport
-        from mcp.types import JSONRPCMessage, JSONRPCRequest
-        from mcp.shared.message import SessionMessage
+    def test_400_fails_without_retrying(self):
+        from mcp.shared.exceptions import McpError
 
-        transport = StreamableHTTPTransport.__new__(StreamableHTTPTransport)
-        transport.session_id = "test"
-        transport.request_headers = {}
-        transport.sse_read_timeout = 30
-        transport._is_initialized_notification = lambda msg: False
-
-        call_count = 0
-
-        async def mock_handle_post(ctx):
-            nonlocal call_count
-            call_count += 1
-            raise _make_http_status_error(400)
-
-        transport._handle_post_request = mock_handle_post
-
-        request_msg = JSONRPCMessage(JSONRPCRequest(
-            jsonrpc="2.0", id=1, method="tools/call",
-            params={"name": "test_tool", "arguments": {}},
-        ))
-        session_msg = SessionMessage(request_msg)
-
-        async def _test():
-            import anyio
-
-            write_send, write_recv = anyio.create_memory_object_stream(10)
-            read_send, read_recv = anyio.create_memory_object_stream(10)
-
-            await write_send.send(session_msg)
-            await write_send.aclose()
-
-            async with anyio.create_task_group() as tg:
-                try:
-                    await transport.post_writer(
-                        MagicMock(), write_recv, read_send,
-                        write_send, lambda: None, tg,
-                    )
-                except Exception:
-                    pass
-
-        from hud.settings import settings
-        original = settings.client_timeout
-        settings.client_timeout = 5
-        try:
-            _run(asyncio.wait_for(_test(), timeout=10))
-        except Exception:
-            pass
-        finally:
-            settings.client_timeout = original
-
-        assert call_count == 1, (
-            f"400 should NOT be retried, but _handle_post_request was called "
-            f"{call_count} time(s)"
-        )
-
-    def test_503_is_retried(self):
-        """503 Service Unavailable should also trigger retry (same as 502)."""
-        import httpx
-        from hud.patches.mcp_patches import apply_all_patches
-        apply_all_patches()
-
-        from mcp.client.streamable_http import StreamableHTTPTransport
-        from mcp.types import JSONRPCMessage, JSONRPCRequest
-        from mcp.shared.message import SessionMessage
-
-        transport = StreamableHTTPTransport.__new__(StreamableHTTPTransport)
-        transport.session_id = "test"
-        transport.request_headers = {}
-        transport.sse_read_timeout = 30
-        transport._is_initialized_notification = lambda msg: False
-
-        call_count = 0
-
-        async def mock_handle_post(ctx):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise _make_http_status_error(503)
-
-        transport._handle_post_request = mock_handle_post
-
-        request_msg = JSONRPCMessage(JSONRPCRequest(
-            jsonrpc="2.0", id=1, method="tools/call",
-            params={"name": "test_tool", "arguments": {}},
-        ))
-        session_msg = SessionMessage(request_msg)
-
-        async def _test():
-            import anyio
-
-            write_send, write_recv = anyio.create_memory_object_stream(10)
-            read_send, read_recv = anyio.create_memory_object_stream(10)
-
-            await write_send.send(session_msg)
-            await write_send.aclose()
-
-            async with anyio.create_task_group() as tg:
-                try:
-                    await transport.post_writer(
-                        MagicMock(), write_recv, read_send,
-                        write_send, lambda: None, tg,
-                    )
-                except Exception:
-                    pass
-
-        from hud.settings import settings
-        original = settings.client_timeout
-        settings.client_timeout = 10
-        try:
-            _run(asyncio.wait_for(_test(), timeout=15))
-        except asyncio.TimeoutError:
-            pass
-        finally:
-            settings.client_timeout = original
-
-        assert call_count >= 2, (
-            f"503 should trigger retry, but _handle_post_request was called "
-            f"only {call_count} time(s)"
-        )
+        with pytest.raises(McpError):
+            _run(
+                _send_ping_through_transport(
+                    [
+                        _FakeResponse(status_code=400),
+                        _success_response(),
+                    ]
+                )
+            )
