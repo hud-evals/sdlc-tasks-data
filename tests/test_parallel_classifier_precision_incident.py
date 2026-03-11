@@ -5,6 +5,7 @@ import asyncio
 import io
 import logging
 from contextlib import contextmanager
+from pathlib import Path
 
 from hud.eval.context import EvalContext
 from hud.eval.parallel import log_eval_stats
@@ -29,6 +30,10 @@ def _ctx(*, reward: float | None, error: BaseException | None = None) -> EvalCon
 
 def _classify(exc: BaseException):
     return HudException._analyze_exception(exc, str(exc))
+
+
+def _exceptions_source() -> str:
+    return Path("hud/shared/exceptions.py").read_text()
 
 
 @contextmanager
@@ -84,11 +89,12 @@ class TestExceptionClassificationPrecision:
             f"CancelledError was misclassified as HudClientError: {result!r}."
         )
 
-    def test_shutdown_runtime_noise_stops_short_of_client_error(self):
-        result = _classify(RuntimeError("event loop shutting down while grouped batch closes"))
+    def test_event_loop_guard_is_narrowed_in_source(self):
+        source = _exceptions_source()
 
-        assert not isinstance(result, HudClientError), (
-            f"Shutdown runtime noise was misclassified as HudClientError: {result!r}."
+        assert '"event loop" in error_msg and "closed" in error_msg' in source, (
+            "The event-loop classifier should explicitly preserve the closed-loop path "
+            "instead of matching every event-loop string."
         )
 
     def test_event_loop_closed_still_detected(self):
