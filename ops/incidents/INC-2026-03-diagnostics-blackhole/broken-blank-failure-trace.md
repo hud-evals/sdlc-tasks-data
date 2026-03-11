@@ -2,27 +2,21 @@
 
 Run window: March 9, 2026, 11:07 UTC
 
-Operator summary:
-- Parent diagnostics run exists.
-- A deeper investigation path fails.
-- The parent run ends in a degraded or failed state but carries almost no usable explanation.
+Responder notes:
+- Parent run exists and changes state from healthy to degraded.
+- A follow-up investigation step appears to have failed.
+- The visible failure summary on the main run is too thin to act on.
 
-Observed sequence:
-1. Parent diagnostics run launches successfully.
-2. A deeper investigation path is triggered after the initial checks.
-3. That deeper path fails.
-4. Parent run summary changes state but the visible failure context is generic and not actionable.
-5. On-call cannot tell whether the actual failure was transport, orchestration, dependency setup, or application behavior without leaving the run page and searching elsewhere.
+Captured sequence:
+- 11:07:04 parent run launched
+- 11:07:16 secondary investigation path started
+- 11:07:24 parent run changed state
+- 11:07:24 visible summary remained generic
 
-What support reported:
-- Before the rollout, the parent run summary usually contained enough detail to decide whether to wake the application owner or continue platform triage.
-- After the rollout, some failed runs end with a generic failure shell and no useful reason attached to the main run.
+What the responder could not answer from the run page:
+- Was the failure in setup, execution, or downstream dependency handling?
+- Was the visible failure summary missing because nothing was recorded, or because it was not carried back to the main run?
 
-Competing hypotheses this creates:
-- maybe the failure is happening before any useful context is recorded
-- maybe the deeper investigation result is failing but the parent run is not absorbing that failure correctly
-- maybe the diagnostics transport changed how failure details are surfaced
-
-What this rules out:
-- This is not just "diagnostics never ran"
-- Parent and deeper work both appear to happen, but the failure context is no longer preserved where on-call expects it
+What changed operationally:
+- Before this incident family, the main run usually carried enough detail to decide whether to page the application owner or continue platform triage.
+- In this sample, the operator had to leave the run page and search elsewhere immediately.

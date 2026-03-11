@@ -6,7 +6,7 @@
 - Platform rollout begins for the new diagnostics transport/orchestration bundle.
 
 18:22 UTC
-- Release notes mention cleanup to the early-launch path and alignment work for deeper investigation execution.
+- Release notes mention cleanup to launch behavior and investigation execution handoffs.
 
 18:47 UTC
 - One internal smoke run is marked successful.
@@ -14,7 +14,7 @@
 - It does not explicitly validate all degraded or early-failure visibility paths.
 
 19:10 UTC
-- Support opens the first internal note that diagnostics runs "still starts" but feels less useful during escalation.
+- Support opens the first internal note that diagnostics "still starts" but feels less useful during escalation.
 
 20:03 UTC
 - A separate downstream service deploy happens in the same general evening window.
@@ -31,9 +31,8 @@
 12:31 UTC
 - On-call report: some setup-time failures produce no usable run link, making handoff difficult.
 
-## Working hypotheses during triage
+## Notes during triage
 
-- transport migration introduced a visibility gap
-- deeper investigation execution changed but its linkage back to the parent run regressed
-- setup lifecycle cleanup moved visibility registration too late
-- multiple rollout changes may have created one operationally visible regression family
+- rollout touched more than one diagnostics-path behavior in the same window
+- a separate downstream deploy overlapped the evening and could mislead timing-based triage
+- simple launch success did not rule the incident out

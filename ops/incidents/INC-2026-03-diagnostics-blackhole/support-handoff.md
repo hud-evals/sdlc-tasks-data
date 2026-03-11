@@ -18,8 +18,3 @@ What remains unclear:
 - whether the problem is one regression family or several unrelated regressions
 - whether the missing deeper investigation view and the blank failure context share the same cause
 - whether the no-link setup failures come from the same rollout or from a separate setup bug
-
-Guidance for investigation:
-- Compare a healthy pre-rollout run against the broken examples before changing code.
-- Treat the overlapping downstream deploy as a possible false lead unless the evidence forces you there.
-- Focus on what made diagnostics less useful to on-call, not only on whether it still technically executes.
