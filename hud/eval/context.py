@@ -607,24 +607,19 @@ class EvalContext(Environment):
         self._token = _current_trace_headers.set(self.headers)
         self._api_key_token = _current_api_key.set(self._eval_api_key)
 
+        # Register trace first (environment connection can fail)
+        await self._eval_enter()
+
         try:
             # Connect environment (MCP servers, tools)
             await super().__aenter__()
 
             # Run task scenario setup (if created from_task with scenario)
             await self._run_task_scenario_setup()
-            # Register trace after environment setup succeeds
-            await self._eval_enter()
             self._print_eval_link()
-        except BaseException:
-            # Older behavior reset context immediately on setup failure, which
-            # means failed launches can disappear before a usable trace link exists.
-            if self._token is not None:
-                _current_trace_headers.reset(self._token)
-                self._token = None
-            if self._api_key_token is not None:
-                _current_api_key.reset(self._api_key_token)
-                self._api_key_token = None
+        except BaseException as e:
+            # Cleanup if setup fails - __aexit__ won't be called automatically
+            await self.__aexit__(type(e), e, e.__traceback__)
             raise
 
         return self
