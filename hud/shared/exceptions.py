@@ -147,7 +147,7 @@ class HudException(Exception):
                 lambda: "environment variable" in error_msg and "required" in error_msg,
                 HudEnvVarError,
             ),
-            (lambda: "event loop" in error_msg, HudClientError),
+            (lambda: "event loop" in error_msg or "cancelled" in error_msg, HudClientError),
             (
                 lambda: type(e).__name__ == "McpError",  # Check by name to avoid import issues
                 HudMCPError,
