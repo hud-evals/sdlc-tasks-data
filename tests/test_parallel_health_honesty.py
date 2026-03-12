@@ -195,6 +195,7 @@ class TestContainmentAndClassificationGuardrails:
         async def _test():
             started: set[int] = set()
             finished: list[int] = []
+            cancelled: list[int] = []
             all_started = asyncio.Event()
 
             async def body(ctx):
@@ -207,15 +208,22 @@ class TestContainmentAndClassificationGuardrails:
                 if ctx.index == 1:
                     raise RuntimeError("child failure")
 
-                await asyncio.sleep(0.01)
-                ctx.reward = {0: 1.0, 2: 0.5}[ctx.index]
-                finished.append(ctx.index)
+                try:
+                    # Keep healthy siblings in-flight long enough for a broken
+                    # gather-based implementation to cancel them.
+                    await asyncio.sleep(0.2)
+                    ctx.reward = {0: 1.0, 2: 0.5}[ctx.index]
+                    finished.append(ctx.index)
+                except asyncio.CancelledError:
+                    cancelled.append(ctx.index)
+                    raise
 
             results = await _run_parallel_case(monkeypatch, body, group=3)
             by_index = {ctx.index: ctx for ctx in results}
 
             assert sorted(by_index) == [0, 1, 2], "All child runs should still be represented."
             assert sorted(finished) == [0, 2], "Healthy siblings should still finish their work."
+            assert cancelled == [], "Healthy siblings should not be cancelled by a peer failure."
             assert by_index[1].error is not None, "The failed child must remain visibly failed."
             assert by_index[1].reward is None, "Containment should not forge a synthetic success-like reward."
 
