@@ -99,7 +99,7 @@ class TestLocalEntryPathDispatch:
     def test_local_run_evaluation_passes_taskset_to_run_dataset(self):
         from hud.cli.eval import EvalConfig, _run_evaluation
 
-        dummy_task = SimpleNamespace(id="task-1")
+        dummy_task = SimpleNamespace(id="task-1", args={"prompt": "seed prompt"}, scenario="seed")
         run_dataset_mock = AsyncMock(return_value=[SimpleNamespace(reward=1.0)])
 
         async def _run():
