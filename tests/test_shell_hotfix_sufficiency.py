@@ -105,6 +105,7 @@ class TestWritePathIntegrity:
 
     def test_edit_create_preserves_delimiter_like_payload_without_side_effects(self, tmp_path: Path) -> None:
         async def _test() -> None:
+            tmp_path.chmod(0o777)
             tool = EditTool()
             target = tmp_path / "payload.txt"
             marker = tmp_path / "marker.txt"
@@ -125,6 +126,7 @@ class TestWritePathIntegrity:
 
     def test_edit_create_round_trips_script_payload(self, tmp_path: Path) -> None:
         async def _test() -> None:
+            tmp_path.chmod(0o777)
             edit_tool = EditTool()
             shell_tool = await _build_shell_tool()
             target = tmp_path / "generated.sh"
