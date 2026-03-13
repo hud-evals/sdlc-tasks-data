@@ -150,3 +150,47 @@ class TestRunEvalErrorHandling:
             error_msg = mock_exit.call_args[0][0]
             assert error_msg is not None
             assert "test error" in error_msg
+
+
+class TestReleaseCandidateMitigation:
+    """Visible checks that made the canary mitigation look releasable."""
+
+    @pytest.mark.asyncio
+    async def test_missing_task_version_ids_returns_none(self) -> None:
+        from hud.eval.manager import _send_job_enter
+
+        mock_resp = AsyncMock()
+        mock_resp.is_success = True
+        mock_resp.raise_for_status = AsyncMock()
+        mock_resp.json.return_value = {"status": "ok", "job_id": "abc123"}
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+        mock_client.post.return_value = mock_resp
+
+        with (
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("hud.settings.settings") as mock_settings,
+        ):
+            mock_settings.telemetry_enabled = True
+            mock_settings.api_key = "test-key"
+            mock_settings.hud_api_url = "https://api.test"
+
+            result = await _send_job_enter(
+                job_id="j1",
+                name="test",
+                variants=None,
+                group=1,
+                api_key="test-key",
+            )
+
+        assert result is None
+
+    def test_job_enter_payload_keeps_taskset(self) -> None:
+        from hud.eval.types import JobEnterPayload
+
+        payload = JobEnterPayload(name="eval", group=1, taskset="nightly-suite")
+        dumped = payload.model_dump(exclude_none=True)
+
+        assert dumped["taskset"] == "nightly-suite"
