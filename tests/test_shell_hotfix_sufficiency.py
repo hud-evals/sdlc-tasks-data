@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -103,61 +104,67 @@ class TestShellToolResultIntegrity:
 class TestWritePathIntegrity:
     """The public create/edit path must preserve payloads verbatim."""
 
-    def test_edit_create_preserves_delimiter_like_payload_without_side_effects(self, tmp_path: Path) -> None:
+    def test_edit_create_preserves_delimiter_like_payload_without_side_effects(self) -> None:
         async def _test() -> None:
-            tmp_path.chmod(0o777)
-            tool = EditTool()
-            target = tmp_path / "payload.txt"
-            marker = tmp_path / "marker.txt"
+            with tempfile.TemporaryDirectory(prefix="wrong_layer_write_") as tmpdir:
+                tmp_path = Path(tmpdir)
+                tmp_path.chmod(0o777)
 
-            content = "\n".join([
-                "alpha",
-                "EOF",
-                f"touch {marker}",
-                "omega",
-            ])
+                tool = EditTool()
+                target = tmp_path / "payload.txt"
+                marker = tmp_path / "marker.txt"
 
-            await tool(command="create", path=str(target), file_text=content)
+                content = "\n".join([
+                    "alpha",
+                    "EOF",
+                    f"touch {marker}",
+                    "omega",
+                ])
 
-            assert target.read_text(encoding="utf-8") == content
-            assert not marker.exists()
+                await tool(command="create", path=str(target), file_text=content)
+
+                assert target.read_text(encoding="utf-8") == content
+                assert not marker.exists()
 
         _run(_test())
 
-    def test_edit_create_round_trips_script_payload(self, tmp_path: Path) -> None:
+    def test_edit_create_round_trips_script_payload(self) -> None:
         async def _test() -> None:
-            tmp_path.chmod(0o777)
-            edit_tool = EditTool()
-            shell_tool = await _build_shell_tool()
-            target = tmp_path / "generated.sh"
+            with tempfile.TemporaryDirectory(prefix="wrong_layer_script_") as tmpdir:
+                tmp_path = Path(tmpdir)
+                tmp_path.chmod(0o777)
 
-            content = "\n".join([
-                "#!/bin/sh",
-                "printf 'before\\n'",
-                "cat <<'PAYLOAD'",
-                "literal line",
-                "EOF",
-                "after marker",
-                "PAYLOAD",
-                "printf 'after\\n'",
-            ])
+                edit_tool = EditTool()
+                shell_tool = await _build_shell_tool()
+                target = tmp_path / "generated.sh"
 
-            try:
-                await edit_tool(command="create", path=str(target), file_text=content)
-
-                assert target.read_text(encoding="utf-8") == content
-
-                result = await shell_tool(commands=[f"bash {shlex.quote(str(target))}"])
-                output = _first_output(result)
-                assert output.outcome.exit_code == 0
-                assert output.stdout.splitlines() == [
-                    "before",
+                content = "\n".join([
+                    "#!/bin/sh",
+                    "printf 'before\\n'",
+                    "cat <<'PAYLOAD'",
                     "literal line",
                     "EOF",
                     "after marker",
-                    "after",
-                ]
-            finally:
-                await _cleanup_shell_tool(shell_tool)
+                    "PAYLOAD",
+                    "printf 'after\\n'",
+                ])
+
+                try:
+                    await edit_tool(command="create", path=str(target), file_text=content)
+
+                    assert target.read_text(encoding="utf-8") == content
+
+                    result = await shell_tool(commands=[f"bash {shlex.quote(str(target))}"])
+                    output = _first_output(result)
+                    assert output.outcome.exit_code == 0
+                    assert output.stdout.splitlines() == [
+                        "before",
+                        "literal line",
+                        "EOF",
+                        "after marker",
+                        "after",
+                    ]
+                finally:
+                    await _cleanup_shell_tool(shell_tool)
 
         _run(_test())
