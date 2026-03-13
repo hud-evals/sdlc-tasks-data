@@ -1,0 +1,257 @@
+[project]
+name = "hud-python"
+version = "0.5.23"
+description = "SDK for the HUD platform."
+readme = "README.md"
+requires-python = ">=3.11, <3.13"
+authors = [
+{ name = "HUD", email = "founders@hud.ai" },
+]
+license = { file = "LICENSE" }
+dependencies = [
+    # Core dependencies - minimal for MCP servers and CLI
+    "httpx>=0.23.0,<1",
+    "packaging>=21.0",
+    "pydantic>=2.6,<3",
+    "pydantic-settings>=2.2,<3",
+    # MCP dependencies
+    "mcp>1.21.1,<1.23",
+    "fastmcp==2.13.3",
+    # For all inference agents
+    "openai>=2.8.1",
+    # CLI dependencies
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "toml>=0.10.2",
+    "watchfiles>=0.21.0",
+    "questionary==2.1.0",
+    "prompt-toolkit==3.0.51",  # Locked for questionary compatibility
+    "blessed>=1.20.0",
+    "scarf-sdk>=0.1.0",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/hud-evals/hud-python"
+"Bug Tracker" = "https://github.com/hud-evals/hud-python/issues"
+"Documentation" = "https://docs.hud.ai"
+
+[project.scripts]
+hud = "hud.cli:main"
+hud-python = "hud.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+exclude = [
+    "environments/",
+    "docs/",
+    "examples/",
+    "**/checkpoints/",
+    "**/*.safetensors",
+    "**/*.ckpt",
+    "**/*.pth",
+]
+
+[tool.hud.clone]
+title = "🚀 Welcome to HUD SDK!"
+message = """[bold cyan]Thanks for using the hud SDK![/bold cyan]
+
+[yellow]Quick Start:[/yellow]
+• Install in development mode: [green]pip install -e .[/green]
+• Try the CLI: [green]hud --help[/green]
+• Analyze an MCP server: [green]hud analyze hud-text-2048:latest[/green]
+• Read the docs: [green]docs/[/green]
+
+[dim]For more examples, check out the [cyan]examples/[/cyan] directory.[/dim]
+
+[bold]Happy coding! 🎉[/bold]"""
+style = "blue"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "hud/**",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml"
+]
+exclude = [
+    "*/tests/",
+    "*/__pycache__/",
+    "**/*.safetensors",
+    "**/*.ckpt",
+    "**/*.pth",
+    "*.pyc",
+    "*.pyo",
+    "*~",
+    ".DS_Store"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["hud"]
+
+# Ensure py.typed is included in the package
+[tool.hatch.build.targets.wheel.force-include]
+"hud/py.typed" = "hud/py.typed"
+
+[project.optional-dependencies]
+# Agent implementations, AI providers, datasets, and telemetry
+agents = [
+    # MCP-use client (legacy)
+    "mcp-use==1.5.0",
+    "langchain>=1.1.0",  # Required by mcp-use
+    # AI providers
+    "anthropic>=0.78.0",
+    "google-genai",
+    "openai-agents",
+    # Dataset loading (HuggingFace)
+    "datasets>=2.14.0",
+    # Image processing for screenshots/grounding
+    "pillow>=11.1.0",
+    # Jupyter kernel support
+    "tornado>=6.5.2",
+]
+
+# AWS Bedrock support for ClaudeAgent
+bedrock = [
+    "anthropic[bedrock]>=0.78.0",
+]
+
+# Development dependencies - includes testing, linting, and automation tools
+dev = [
+    "hud-python[agents]",  # Include agents for dev
+    # Jupyter support
+    "ipykernel",
+    "ipython <9",
+    "jupyter_client",
+    "jupyter_core",
+    "dotenv>=0.9.9",
+    # Testing and linting
+    "ruff >=0.11.8, <0.15.0",
+    "pytest >=8.1.1",
+    "pytest-asyncio",
+    "pytest-mock",
+    "pytest-cov",
+    "pyright==1.1.407",
+    # Automation and computer control
+    "playwright",
+    "pyautogui>=0.9.54",
+    # Optional integrations (for type checking)
+    "llama-index-core",
+    "google-adk",
+]
+
+# Alias for backwards compatibility
+agent = ["hud-python[agents]"]
+
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+lint.extend-select = [
+    "I",       # isort
+    "F",       # pyflakes
+    "ANN",     # flake8-annotations
+    "Q",       # flake8-quotes
+    "ASYNC",   # flake8-async
+    "TID",     # flake8-tidy
+    "RSE",     # flake8-raise
+    "G",       # flake8-logging-format
+    "B",       # flake8-bugbear
+    "E",       # pycodestyle errors
+    "W",       # pycodestyle warnings
+    "PIE",     # flake8-pie
+    "S",       # flake8-bandit
+    "PERF",    # Perflint
+    "PLC",     # Pylint
+    "UP",      # pyupgrade
+    "SIM",     # flake8-simplify
+    "INP",     # flake8-no-pep420
+    "T20",     # flake8-print
+    "PYI",     # flake8-pyi
+    "TCH",     # Flake-8 TCH
+    "T10",     # flake-8 debugger
+    "RUF",     # Ruff-specific
+]
+lint.ignore = [
+    "ANN401", # Allow Any.
+    "W293",   # Ignore blank line contains whitespace
+    "PLC0415", # Allow function-local imports.
+    "S101", # Allow assert statements.
+    "E731", # Allow lambda assignments.
+]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"**/tests/**/*.py" = ["PYI", "B", "S", "ANN"]
+"*.ipynb" = ["ALL"] # Disables all rules for Jupyter.
+"**/examples/**/*.py" = ["ALL"]
+"**/environments/**/*.py" = ["ALL"]
+
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
+[tool.pyright]
+include = ["hud"]
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/venv",
+]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+reportMissingImports = "warning"
+
+[tool.coverage.run]
+source = ["hud"]
+omit = [
+    "*/tests/*",
+    "*/examples/*",
+    "hud/misc/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "pass",
+    "pytest.mark.skip",
+    "@(typing\\.)?overload",
+    "if TYPE_CHECKING:",
+    "if typing.TYPE_CHECKING:",
+    "class .*\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+show_missing = true
+fail_under = 58
+omit = [
+    "*/tests/*",
+    "*/examples/*",
+    "hud/misc/*",
+]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+asyncio_mode = "auto"
+testpaths = ["hud", "examples"]
+# Ignore the dev folder and other non-test directories
+addopts = "--ignore=dev --ignore=ref --ignore=test_env --ignore=environments"
+markers = [
+    "integration: marks tests as integration tests (require HUD_API_KEY, network access)",
+]
