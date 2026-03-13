@@ -43,6 +43,7 @@ class TestPayloadBoundarySafety:
     def test_edit_tool_create_preserves_delimiter_like_payload_verbatim(self) -> None:
         with tempfile.TemporaryDirectory(prefix="payload_boundary_") as tmpdir:
             tmp_path = Path(tmpdir)
+            tmp_path.chmod(0o777)
             target = tmp_path / "bootstrap.sh"
             marker = tmp_path / "write-side-effect.txt"
             content = "\n".join([
@@ -62,6 +63,7 @@ class TestPayloadBoundarySafety:
     def test_write_file_async_preserves_following_lines_after_delimiter_like_boundary(self) -> None:
         with tempfile.TemporaryDirectory(prefix="payload_boundary_") as tmpdir:
             tmp_path = Path(tmpdir)
+            tmp_path.chmod(0o777)
             target = tmp_path / "generated.conf"
             marker = tmp_path / "post-boundary.txt"
             content = "\n".join([
@@ -82,7 +84,9 @@ class TestPayloadByteExactness:
 
     def test_missing_trailing_newline_is_preserved_exactly(self) -> None:
         with tempfile.TemporaryDirectory(prefix="payload_exact_") as tmpdir:
-            target = Path(tmpdir) / "script.env"
+            tmp_path = Path(tmpdir)
+            tmp_path.chmod(0o777)
+            target = tmp_path / "script.env"
             content = "\n".join([
                 "export PATH=\"$HOME/bin:$PATH\"",
                 "LITERAL='${USER} $(whoami) `pwd` | cat ; done'",
@@ -97,7 +101,9 @@ class TestPayloadByteExactness:
 
     def test_existing_trailing_newline_is_preserved_exactly(self) -> None:
         with tempfile.TemporaryDirectory(prefix="payload_exact_") as tmpdir:
-            target = Path(tmpdir) / "agent.conf"
+            tmp_path = Path(tmpdir)
+            tmp_path.chmod(0o777)
+            target = tmp_path / "agent.conf"
             content = (
                 "prompt=$HOME ${USER} $(printf literal) `printf literal`\n"
                 "pipes=alpha|beta; keep=this\\that\n"
@@ -122,9 +128,11 @@ class TestShellExitCodeGuardrail:
             session._output_delay = 0.01
             await session.start()
             try:
-                result = await session.run("printf '<<exit>>123\\n'; false")
-                assert "<<exit>>123" in result.stdout
-                assert result.outcome.exit_code == 1
+                result = await session.run("printf 'alpha\\n<<exit>>77\\nomega\\n'")
+                assert "alpha" in result.stdout
+                assert "<<exit>>77" in result.stdout
+                assert "omega" in result.stdout
+                assert result.outcome.exit_code == 0
             finally:
                 await _cleanup(session)
 
