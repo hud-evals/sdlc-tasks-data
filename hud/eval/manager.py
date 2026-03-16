@@ -20,6 +20,7 @@ from hud.eval.parallel import (
     resolve_group_ids,
 )
 from hud.eval.types import ParallelEvalComplete
+from hud.utils.mcp import _is_hud_server
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -28,6 +29,40 @@ if TYPE_CHECKING:
     from hud.eval.task import Task
 
 logger = logging.getLogger(__name__)
+
+
+def _task_uses_hud_hosted_remote(task: Task) -> bool:
+    """Return True when a task routes through a HUD-hosted remote environment."""
+    env = getattr(task, "env", None)
+    if env is None:
+        return False
+
+    if getattr(env, "_hub_config", None) is not None:
+        return True
+
+    mcp_config = getattr(env, "_mcp_config", None)
+    if isinstance(mcp_config, dict):
+        for server_cfg in mcp_config.values():
+            if not isinstance(server_cfg, dict):
+                continue
+            url = server_cfg.get("url", "")
+            if isinstance(url, str) and _is_hud_server(url):
+                return True
+
+    return False
+
+
+def _enforce_parallel_hosted_containment(tasks: list[Task], group: int) -> None:
+    """Fail closed for grouped HUD-hosted runs until cross-trace isolation is repaired."""
+    if group <= 1 or not tasks:
+        return
+
+    if any(_task_uses_hud_hosted_remote(task) for task in tasks):
+        raise RuntimeError(
+            "Grouped runs against HUD-hosted remote environments are temporarily "
+            "blocked due to cross-trace contamination risk. Re-run with group=1 "
+            "until the durable isolation fix lands."
+        )
 
 
 def _get_eval_name(tasks: list[Task] | None = None, group: int = 1) -> str:
@@ -240,6 +275,9 @@ async def run_eval(
     # Each task gets (variants x group) runs; no tasks = single blank eval
     base_count = len(tasks) or 1
     total_evals = base_count * len(variant_combos) * group
+
+    if total_evals > 1 and tasks:
+        _enforce_parallel_hosted_containment(tasks, group)
 
     # Capture code snippet for parallel execution
     code_snippet: str | None = None
