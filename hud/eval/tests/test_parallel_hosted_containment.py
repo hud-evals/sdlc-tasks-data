@@ -1,104 +1,51 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 import pytest
 
-from hud.environment import Environment
-from hud.eval.manager import run_eval
-from hud.eval.task import Task
+from hud.eval.manager import _enforce_parallel_hosted_containment, _task_uses_hud_hosted_remote
 
 
-class _FakeEvalContext:
-    def __init__(self) -> None:
-        self.eval_name = "eval"
-        self.reward = None
-        self.error = None
-
-    async def __aenter__(self) -> _FakeEvalContext:
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
-        return False
+def _make_task(*, hub_config=None, mcp_config=None):
+    env = SimpleNamespace(_hub_config=hub_config, _mcp_config=mcp_config)
+    return SimpleNamespace(env=env)
 
 
-def _make_hud_hosted_task() -> Task:
-    env = Environment("browser")
-    env._hub_config = {"name": "browser"}
-    return Task(env=env)
+def test_grouped_hud_hosted_runs_fail_closed() -> None:
+    task = _make_task(hub_config={"name": "browser"})
 
-
-def _make_non_hud_remote_task() -> Task:
-    env = Environment("external")
-    env.connect_url("https://mcp.example.com", alias="example")
-    return Task(env=env)
-
-
-def _make_local_task() -> Task:
-    env = Environment("local")
-    env.connect_mcp_config(
-        {
-            "filesystem": {
-                "command": "python",
-                "args": ["-m", "example_server"],
-            }
-        }
-    )
-    return Task(env=env)
-
-
-@pytest.mark.asyncio
-async def test_grouped_hud_hosted_runs_fail_closed() -> None:
-    task = _make_hud_hosted_task()
-
-    with (
-        patch("hud.eval.manager._send_job_enter", new=AsyncMock(return_value=None)),
-        patch("hud.eval.manager._run_parallel_eval", new=AsyncMock(return_value=[])),
-        pytest.raises(
-            RuntimeError,
-            match="Grouped runs against HUD-hosted remote environments are temporarily blocked",
-        ) as excinfo,
-    ):
-        async with run_eval(task, group=2, trace=False, quiet=True):
-            pass
+    with pytest.raises(
+        RuntimeError,
+        match="Grouped runs against HUD-hosted remote environments are temporarily blocked",
+    ) as excinfo:
+        _enforce_parallel_hosted_containment([task], 2)
 
     assert "cross-trace contamination risk" in str(excinfo.value)
     assert "group=1" in str(excinfo.value)
 
 
-@pytest.mark.asyncio
-async def test_single_trace_hud_hosted_runs_remain_allowed() -> None:
-    task = _make_hud_hosted_task()
-    fake_ctx = _FakeEvalContext()
+def test_single_trace_hud_hosted_runs_remain_allowed() -> None:
+    task = _make_task(hub_config={"name": "browser"})
 
-    with patch("hud.eval.context.EvalContext.from_task", return_value=fake_ctx):
-        async with run_eval(task, group=1, trace=False, quiet=True) as ctx:
-            assert ctx is fake_ctx
+    _enforce_parallel_hosted_containment([task], 1)
 
 
-@pytest.mark.asyncio
-async def test_grouped_non_hud_remote_runs_are_not_blocked() -> None:
-    task = _make_non_hud_remote_task()
+def test_grouped_non_hud_remote_runs_are_not_blocked() -> None:
+    task = _make_task(mcp_config={"example": {"url": "https://mcp.example.com"}})
 
-    with (
-        patch("hud.eval.manager._send_job_enter", new=AsyncMock(return_value=None)),
-        patch("hud.eval.manager._run_parallel_eval", new=AsyncMock(return_value=[])) as mock_run,
-    ):
-        async with run_eval(task, group=2, trace=False, quiet=True) as ctx:
-            assert ctx.eval_name == "eval"
-
-    mock_run.assert_awaited_once()
+    _enforce_parallel_hosted_containment([task], 2)
+    assert _task_uses_hud_hosted_remote(task) is False
 
 
-@pytest.mark.asyncio
-async def test_grouped_local_runs_are_not_blocked() -> None:
-    task = _make_local_task()
+def test_grouped_local_runs_are_not_blocked() -> None:
+    task = _make_task(mcp_config={"filesystem": {"command": "python", "args": ["-m", "srv"]}})
 
-    with (
-        patch("hud.eval.manager._send_job_enter", new=AsyncMock(return_value=None)),
-        patch("hud.eval.manager._run_parallel_eval", new=AsyncMock(return_value=[])) as mock_run,
-    ):
-        async with run_eval(task, group=3, trace=False, quiet=True) as ctx:
-            assert ctx.eval_name == "eval"
+    _enforce_parallel_hosted_containment([task], 3)
+    assert _task_uses_hud_hosted_remote(task) is False
 
-    mock_run.assert_awaited_once()
+
+def test_hud_mcp_config_path_is_treated_as_hosted_remote() -> None:
+    task = _make_task(mcp_config={"hud": {"url": "https://mcp.hud.ai/browser"}})
+
+    assert _task_uses_hud_hosted_remote(task) is True
