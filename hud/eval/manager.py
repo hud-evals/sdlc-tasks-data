@@ -31,6 +31,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _parallel_hosted_containment_message() -> str:
+    """Operator-facing message for unsafe grouped hosted execution."""
+    return (
+        "Grouped runs against HUD-hosted remote environments are temporarily "
+        "blocked due to cross-trace contamination risk. Re-run with group=1 "
+        "until the durable isolation fix lands."
+    )
+
+
 def _task_uses_hud_hosted_remote(task: Task) -> bool:
     """Return True when a task routes through a HUD-hosted remote environment."""
     env = getattr(task, "env", None)
@@ -53,16 +62,12 @@ def _task_uses_hud_hosted_remote(task: Task) -> bool:
 
 
 def _enforce_parallel_hosted_containment(tasks: list[Task], group: int) -> None:
-    """Fail closed for grouped HUD-hosted runs until cross-trace isolation is repaired."""
+    """Fail closed when every grouped task is HUD-hosted and therefore unsafe."""
     if group <= 1 or not tasks:
         return
 
-    if any(_task_uses_hud_hosted_remote(task) for task in tasks):
-        raise RuntimeError(
-            "Grouped runs against HUD-hosted remote environments are temporarily "
-            "blocked due to cross-trace contamination risk. Re-run with group=1 "
-            "until the durable isolation fix lands."
-        )
+    if all(_task_uses_hud_hosted_remote(task) for task in tasks):
+        raise RuntimeError(_parallel_hosted_containment_message())
 
 
 def _get_eval_name(tasks: list[Task] | None = None, group: int = 1) -> str:
@@ -545,6 +550,10 @@ async def _run_parallel_eval(
         # Remove sensitive data from params after context creation to prevent
         # accidental logging if an exception includes local variables
         params.pop("api_key", None)
+
+        if task is not None and group > 1 and _task_uses_hud_hosted_remote(task):
+            ctx.error = RuntimeError(_parallel_hosted_containment_message())
+            return ctx
 
         try:
             if sem:
