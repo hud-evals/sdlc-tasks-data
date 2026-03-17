@@ -61,9 +61,9 @@ def _task_uses_hud_hosted_remote(task: Task) -> bool:
     return False
 
 
-def _enforce_parallel_hosted_containment(tasks: list[Task], group: int) -> None:
-    """Fail closed when every grouped task is HUD-hosted and therefore unsafe."""
-    if group <= 1 or not tasks:
+def _enforce_parallel_hosted_containment(tasks: list[Task], total_evals: int) -> None:
+    """Fail closed when hosted tasks would create multiple child traces."""
+    if total_evals <= 1 or not tasks:
         return
 
     if all(_task_uses_hud_hosted_remote(task) for task in tasks):
@@ -282,7 +282,7 @@ async def run_eval(
     total_evals = base_count * len(variant_combos) * group
 
     if total_evals > 1 and tasks:
-        _enforce_parallel_hosted_containment(tasks, group)
+        _enforce_parallel_hosted_containment(tasks, total_evals)
 
     # Capture code snippet for parallel execution
     code_snippet: str | None = None
