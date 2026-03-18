@@ -29,6 +29,18 @@ def _is_streamable_http_transport(transport: Any) -> bool:
     return isinstance(transport, StreamableHttpTransport)
 
 
+def _is_hud_hub_streamable_http_transport(transport: Any) -> bool:
+    """Return True for hub-backed streamable-http transports only."""
+    if not _is_streamable_http_transport(transport):
+        return False
+
+    headers = getattr(transport, "headers", None) or {}
+    if not isinstance(headers, dict):
+        return False
+
+    return "Environment-Name" in headers and "Environment-Id" in headers
+
+
 class ConnectionType(str, Enum):
     """Type of connection - determines parallelization capability."""
 
@@ -203,9 +215,9 @@ class Connector:
         if client is None:
             raise RuntimeError("Not connected - call connect() first")
 
-        if self.is_remote and _is_streamable_http_transport(self._transport):
+        if self.is_remote and _is_hud_hub_streamable_http_transport(self._transport):
             raise RuntimeError(
-                "Remote streamable-http tool calls are temporarily disabled as "
+                "Hub-backed streamable-http tool calls are temporarily disabled as "
                 "incident containment. Re-run on an unaffected path while the "
                 "durable transport fix is prepared."
             )
