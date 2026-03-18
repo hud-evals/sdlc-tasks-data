@@ -19,6 +19,16 @@ __all__ = ["ConnectionConfig", "ConnectionType", "Connector"]
 logger = logging.getLogger(__name__)
 
 
+def _is_streamable_http_transport(transport: Any) -> bool:
+    """Return True when a connector is backed by streamable-http transport."""
+    try:
+        from fastmcp.client.transports import StreamableHttpTransport
+    except Exception:
+        return False
+
+    return isinstance(transport, StreamableHttpTransport)
+
+
 class ConnectionType(str, Enum):
     """Type of connection - determines parallelization capability."""
 
@@ -192,6 +202,14 @@ class Connector:
         client = self.client
         if client is None:
             raise RuntimeError("Not connected - call connect() first")
+
+        if self.is_remote and _is_streamable_http_transport(self._transport):
+            raise RuntimeError(
+                "Remote streamable-http tool calls are temporarily disabled as "
+                "incident containment. Re-run on an unaffected path while the "
+                "durable transport fix is prepared."
+            )
+
         # Strip prefix when calling remote
         if self.config.prefix and name.startswith(f"{self.config.prefix}_"):
             name = name[len(self.config.prefix) + 1 :]
