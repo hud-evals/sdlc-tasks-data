@@ -11,9 +11,12 @@ from hud.environment.connection import ConnectionConfig, ConnectionType, Connect
 
 class TestStreamableHttpContainment:
     @pytest.mark.asyncio
-    async def test_remote_streamable_http_fails_closed_before_dispatch(self) -> None:
+    async def test_hub_backed_streamable_http_fails_closed_before_dispatch(self) -> None:
         connector = Connector(
-            transport=StreamableHttpTransport(url="https://mcp.hud.ai/browser"),
+            transport=StreamableHttpTransport(
+                url="https://mcp.hud.ai/browser",
+                headers={"Environment-Name": "browser", "Environment-Id": "env-123"},
+            ),
             config=ConnectionConfig(),
             name="hud",
             connection_type=ConnectionType.REMOTE,
@@ -23,10 +26,43 @@ class TestStreamableHttpContainment:
         mock_client.call_tool = AsyncMock(side_effect=AssertionError("should not dispatch"))
         connector.client = mock_client
 
-        with pytest.raises(RuntimeError, match="streamable-http.*temporarily disabled"):
-            await connector.call_tool("navigate", {"url": "https://hud.ai"})
+        try:
+            result = await connector.call_tool("navigate", {"url": "https://hud.ai"})
+        except RuntimeError as exc:
+            message = str(exc)
+            assert "streamable-http" in message
+            assert "temporarily disabled" in message
+        else:
+            assert result.isError is True
+            joined = " ".join(
+                getattr(item, "text", "") for item in getattr(result, "content", [])
+            )
+            assert "streamable-http" in joined
+            assert "temporarily" in joined
 
         mock_client.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_generic_remote_streamable_http_path_is_not_contained(self) -> None:
+        connector = Connector(
+            transport=StreamableHttpTransport(url="https://mcp.example.com/browser"),
+            config=ConnectionConfig(),
+            name="external",
+            connection_type=ConnectionType.REMOTE,
+        )
+
+        mock_client = MagicMock()
+        mock_client.call_tool = AsyncMock(
+            return_value=mcp_types.CallToolResult(content=[], isError=False)
+        )
+        connector.client = mock_client
+
+        await connector.call_tool("search", {"query": "logs"})
+
+        mock_client.call_tool.assert_called_once_with(
+            name="search",
+            arguments={"query": "logs"},
+        )
 
     @pytest.mark.asyncio
     async def test_remote_sse_path_is_not_contained(self) -> None:
