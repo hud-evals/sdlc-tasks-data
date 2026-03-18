@@ -10,12 +10,24 @@ from hud.environment.connection import ConnectionConfig, ConnectionType, Connect
 
 
 class TestStreamableHttpContainment:
+    @pytest.mark.parametrize(
+        ("tool_name", "arguments"),
+        [
+            ("navigate", {"url": "https://hud.ai"}),
+            ("github_create_issue_comment", {"issue_number": 1, "body": "hello"}),
+            ("linear_update_issue", {"id": "issue-1", "state": "In Progress"}),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_hub_backed_streamable_http_fails_closed_before_dispatch(self) -> None:
+    async def test_hub_backed_streamable_http_fails_closed_before_dispatch(
+        self,
+        tool_name: str,
+        arguments: dict[str, str | int],
+    ) -> None:
         connector = Connector(
             transport=StreamableHttpTransport(
                 url="https://mcp.hud.ai/browser",
-                headers={"Environment-Name": "browser", "Environment-Id": "env-123"},
+                headers={"Environment-Name": "browser"},
             ),
             config=ConnectionConfig(),
             name="hud",
@@ -27,7 +39,7 @@ class TestStreamableHttpContainment:
         connector.client = mock_client
 
         try:
-            result = await connector.call_tool("navigate", {"url": "https://hud.ai"})
+            result = await connector.call_tool(tool_name, arguments)
         except RuntimeError as exc:
             message = str(exc)
             assert "streamable-http" in message
@@ -45,7 +57,10 @@ class TestStreamableHttpContainment:
     @pytest.mark.asyncio
     async def test_generic_remote_streamable_http_path_is_not_contained(self) -> None:
         connector = Connector(
-            transport=StreamableHttpTransport(url="https://mcp.example.com/browser"),
+            transport=StreamableHttpTransport(
+                url="https://mcp.example.com/browser",
+                headers={"Environment-Name": "browser"},
+            ),
             config=ConnectionConfig(),
             name="external",
             connection_type=ConnectionType.REMOTE,
@@ -65,9 +80,12 @@ class TestStreamableHttpContainment:
         )
 
     @pytest.mark.asyncio
-    async def test_remote_sse_path_is_not_contained(self) -> None:
+    async def test_hub_backed_sse_path_is_not_contained(self) -> None:
         connector = Connector(
-            transport=SSETransport(url="https://mcp.hud.ai/browser"),
+            transport=SSETransport(
+                url="https://mcp.hud.ai/browser",
+                headers={"Environment-Name": "browser"},
+            ),
             config=ConnectionConfig(prefix="browser"),
             name="hud",
             connection_type=ConnectionType.REMOTE,
@@ -90,6 +108,31 @@ class TestStreamableHttpContainment:
         )
         assert result.isError is False
         assert result.content[0].text == "ok"
+
+    @pytest.mark.asyncio
+    async def test_generic_remote_sse_path_is_not_contained(self) -> None:
+        connector = Connector(
+            transport=SSETransport(
+                url="https://mcp.example.com/browser",
+                headers={"Environment-Name": "browser"},
+            ),
+            config=ConnectionConfig(),
+            name="external",
+            connection_type=ConnectionType.REMOTE,
+        )
+
+        mock_client = MagicMock()
+        mock_client.call_tool = AsyncMock(
+            return_value=mcp_types.CallToolResult(content=[], isError=False)
+        )
+        connector.client = mock_client
+
+        await connector.call_tool("search", {"query": "logs"})
+
+        mock_client.call_tool.assert_called_once_with(
+            name="search",
+            arguments={"query": "logs"},
+        )
 
     @pytest.mark.asyncio
     async def test_local_connector_path_is_not_contained(self) -> None:
