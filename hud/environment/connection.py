@@ -38,7 +38,8 @@ def _is_hud_hub_streamable_http_transport(transport: Any) -> bool:
     if not isinstance(headers, dict):
         return False
 
-    return "Environment-Name" in headers and "Environment-Id" in headers
+    url = getattr(transport, "url", "") or ""
+    return "Environment-Name" in headers and "mcp.hud." in str(url).lower()
 
 
 class ConnectionType(str, Enum):
