@@ -524,13 +524,34 @@ class Environment(
         if not trace_id and isinstance(meta, dict):
             trace_id = meta.get("_hud_trace_id") or meta.get("trace_id")
 
+        # FastMCP does not forward request meta as call_tool kwargs.
+        # Read request_ctx directly when it exists so attached nested
+        # diagnostics can still use the parent trace normally.
+        if not trace_id:
+            try:
+                from mcp.server.lowlevel.server import request_ctx
+
+                req_meta = getattr(request_ctx.get(), "meta", None)
+                if req_meta is not None:
+                    extra = getattr(req_meta, "model_extra", None) or {}
+                    trace_id = extra.get("_hud_trace_id") or extra.get("trace_id")
+            except (ImportError, LookupError):
+                pass
+
         if trace_id:
             from hud.eval.context import set_trace_context
 
             with set_trace_context(trace_id):
                 result = await self._execute_tool(name, args)
         else:
-            result = await self._execute_tool(name, args)
+            # If a nested diagnostics tool reaches the server without a parent
+            # trace, keep the parent run as the canonical handle and let
+            # AgentTool emit a reduced-mode fallback artifact instead of
+            # silently opening an unattached child run.
+            from hud.tools.agent import set_agent_tool_safe_mode
+
+            with set_agent_tool_safe_mode(True):
+                result = await self._execute_tool(name, args)
 
         return result.content or []
 

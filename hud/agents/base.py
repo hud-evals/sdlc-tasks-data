@@ -433,6 +433,11 @@ class MCPAgent(ABC):
 
             result = await self._run_context(initial_blocks, max_steps=max_steps)
 
+            # Propagate error state to context for platform visibility
+            if result.isError and hasattr(ctx, "error"):
+                error_msg = result.info.get("error") if result.info else result.content
+                ctx.error = Exception(str(error_msg)) if error_msg else Exception("Agent error")
+
             # Submit final answer to context (only if scenario is running)
             if result.content and ctx.has_scenario:
                 await ctx.submit(result.content)
@@ -441,6 +446,9 @@ class MCPAgent(ABC):
 
         except Exception as e:
             logger.exception("Error while running agent:")
+            # Propagate error to context for platform visibility
+            if hasattr(ctx, "error"):
+                ctx.error = e
             return Trace(
                 reward=0.0,
                 done=True,

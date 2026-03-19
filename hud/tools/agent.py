@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextvars
 import inspect
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 from fastmcp.tools.tool import FunctionTool, ToolResult
@@ -14,7 +16,27 @@ if TYPE_CHECKING:
     from hud.agents.base import MCPAgent
     from hud.eval.task import Task
 
-__all__ = ["AgentTool"]
+__all__ = ["AgentTool", "is_agent_tool_safe_mode", "set_agent_tool_safe_mode"]
+
+
+_agent_tool_safe_mode: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "agent_tool_safe_mode", default=False
+)
+
+
+def is_agent_tool_safe_mode() -> bool:
+    """Return whether the current tool call should degrade nested execution."""
+    return _agent_tool_safe_mode.get()
+
+
+@contextmanager
+def set_agent_tool_safe_mode(enabled: bool = True):
+    """Temporarily enable reduced-mode nested AgentTool behavior."""
+    token = _agent_tool_safe_mode.set(enabled)
+    try:
+        yield
+    finally:
+        _agent_tool_safe_mode.reset(token)
 
 
 def _is_eval_only(param: inspect.Parameter) -> bool:
@@ -191,13 +213,16 @@ class AgentTool(BaseTool):
 
         # Use parent trace if available (for hierarchical agents)
         parent_trace_id = get_current_trace_id()
+        safe_mode = self._trace and is_agent_tool_safe_mode() and parent_trace_id is None
 
         # If nested (has parent), skip subagent's enter/exit registration
         # Tool calls are still recorded via the shared trace_id's context
         is_nested = parent_trace_id is not None
 
-        # Trace if explicitly requested AND not nested (nested uses parent trace)
-        should_trace = self._trace and not is_nested
+        # Trace if explicitly requested AND not nested. Safe mode keeps the
+        # parent run as the canonical incident handle instead of opening an
+        # unattached child trace.
+        should_trace = self._trace and not is_nested and not safe_mode
 
         # Wrap execution with instrumentation to mark as subagent
         # Platform uses category="subagent" to detect and render subagent tool calls
@@ -218,6 +243,26 @@ class AgentTool(BaseTool):
 
                 result = await agent.run(ctx)
                 content = result.content if hasattr(result, "content") and result.content else ""
+                if safe_mode:
+                    detail = str(content).strip()
+                    info = getattr(result, "info", None) or {}
+                    error_detail = info.get("error") if isinstance(info, dict) else None
+
+                    summary = (
+                        "Diagnostics safe mode: deeper investigation ran without a "
+                        "normal child-run trail, so this parent-facing fallback "
+                        "summary is preserved for responders."
+                    )
+                    if getattr(result, "isError", False):
+                        detail = str(error_detail or detail or "nested diagnostics failed").strip()
+                        content = f"{summary}\n\nNested failure context: {detail}"
+                    elif detail:
+                        content = f"{summary}\n\nNested summary: {detail}"
+                    else:
+                        content = (
+                            f"{summary}\n\nNested summary: degraded investigation "
+                            "completed without a separate child-run artifact."
+                        )
                 return ToolResult(content=[TextContent(type="text", text=content)])
 
         return await _run_subagent()
